@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Chronicler
  * Description: Chronicles Slack RPG sessions — a wp-admin session editor, transcripts as Gutenberg blocks, and schema-driven character sheets.
- * Version: 4.14.0
+ * Version: 4.15.0
  * Requires PHP: 8.2
  * License: GPLv3 or later
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
@@ -39,6 +39,7 @@ require_once __DIR__ . '/blocks.php';
 require_once __DIR__ . '/sheets/formulas.php';
 require_once __DIR__ . '/sheets/schema.php';
 require_once __DIR__ . '/sheets/names.php';
+require_once __DIR__ . '/sheets/caps.php';
 require_once __DIR__ . '/sheets/post-types.php';
 require_once __DIR__ . '/sheets/admin.php';
 require_once __DIR__ . '/sheets/rest.php';

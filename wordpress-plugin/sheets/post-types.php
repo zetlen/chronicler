@@ -1,23 +1,10 @@
 <?php
-// Character/template post types, the player role, and resolution helpers.
+// Character/template post types and resolution helpers. Roles and caps
+// (player, gm, the character-cap set) live in sheets/caps.php (#162).
 
 if (!defined('ABSPATH')) {
     exit;
 }
-
-const CHRONICLER_CHARACTER_CAPS = [
-    'edit_chr_characters',
-    'edit_others_chr_characters',
-    'edit_published_chr_characters',
-    'edit_private_chr_characters',
-    'publish_chr_characters',
-    'read_private_chr_characters',
-    'delete_chr_characters',
-    'delete_others_chr_characters',
-    'delete_published_chr_characters',
-    'delete_private_chr_characters',
-    'create_chr_characters',
-];
 
 function chronicler_sheets_register_types(): void {
     register_post_type('chr_character', [
@@ -109,17 +96,10 @@ function chronicler_sheets_get_detail(int $post_id, array $property): string {
 
 function chronicler_sheets_activate(): void {
     chronicler_sheets_register_types();
-    add_role('player', 'Player', [
-        'read' => true,
-        'edit_chr_characters' => true,
-        'edit_published_chr_characters' => true,
-    ]);
-    $admin = get_role('administrator');
-    if ($admin) {
-        foreach (CHRONICLER_CHARACTER_CAPS as $cap) {
-            $admin->add_cap($cap);
-        }
-    }
+    // Roles + caps (player/gm + the character caps) — the same update-safe
+    // grant that runs on init, called directly here so a fresh activation
+    // seeds them immediately. Defined in sheets/caps.php (#162).
+    chronicler_sheets_grant_caps();
     // The npc grouping tag is seeded by chronicler_sheets_ensure_npc_term()
     // (sheets/index.php) on init — update-safe, unlike this activation hook.
     flush_rewrite_rules();

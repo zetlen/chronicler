@@ -104,6 +104,8 @@ require __DIR__ . '/mirror.test.php';
 require __DIR__ . '/../src/Editor/Generation.php';
 require __DIR__ . '/generation.test.php';
 
+require __DIR__ . '/caps.test.php';
+
 $n = $GLOBALS['chronicler_test_count'];
 $f = $GLOBALS['chronicler_test_failures'];
 echo ($f === 0 ? "OK" : "FAILED") . " — $n checks, $f failures\n";

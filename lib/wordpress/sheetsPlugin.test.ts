@@ -19,14 +19,6 @@ describe("sheets post types and permissions", () => {
     expect(php).toContain("'map_meta_cap' => true");
   });
 
-  it("creates a player role that cannot edit others' characters", () => {
-    expect(php).toContain("add_role(");
-    expect(php).toContain("'edit_chr_characters' => true");
-    expect(php).not.toContain("'edit_others_chr_characters' => true");
-    // ...while administrators are granted the full set:
-    expect(php).toContain("edit_others_chr_characters");
-  });
-
   it("keeps exactly one active character per player", () => {
     expect(php).toContain("chr_active");
     expect(php).toContain("save_post_chr_character");
@@ -57,6 +49,53 @@ describe("sheets post types and permissions", () => {
     const loader = files["chronicler.php"];
     expect(loader).toContain("require_once __DIR__ . '/sheets/post-types.php'");
     expect(loader).toContain("register_activation_hook(__FILE__, 'chronicler_sheets_activate')");
+  });
+});
+
+describe("sheets roles and capabilities", () => {
+  const php = files["sheets/caps.php"];
+
+  it("declares the full per-author character capability set", () => {
+    expect(php).toContain("const CHRONICLER_CHARACTER_CAPS");
+    // Admins (and, from Task 3, the gm role) hold the full set:
+    expect(php).toContain("edit_others_chr_characters");
+    expect(php).toContain("read_private_chr_characters");
+  });
+
+  it("creates a player role limited to its own sheets", () => {
+    expect(php).toContain("'player'");
+    expect(php).toContain("'edit_chr_characters' => true");
+    expect(php).toContain("'edit_published_chr_characters' => true");
+    // The player caps array never hands out the others-editing cap directly:
+    expect(php).not.toContain("'edit_others_chr_characters' => true");
+  });
+
+  it("ships an in-plugin gm role that runs the game but not the site", () => {
+    expect(php).toContain("'gm'");
+    expect(php).toContain("'Game Master'");
+    // GM drafts sessions via the compose tier...
+    expect(php).toContain("Capabilities::COMPOSE");
+    expect(php).toContain("function chronicler_sheets_gm_role_caps");
+    // ...but gets no site-config tier.
+    expect(php).not.toContain("Capabilities::MANAGE");
+    expect(php).not.toContain("Capabilities::SLACK_READ");
+    expect(php).not.toContain("manage_options");
+  });
+
+  it("re-grants caps update-safely on init, keyed by version", () => {
+    expect(php).toContain("function chronicler_sheets_grant_caps");
+    expect(php).toContain("function chronicler_sheets_ensure_caps");
+    expect(php).toContain("add_action('init', 'chronicler_sheets_ensure_caps')");
+    expect(php).toContain("chronicler_sheets_caps_version");
+    // Additive only — a site's role-editor tweaks survive a re-grant.
+    expect(php).toContain("add_cap");
+    expect(php).not.toContain("remove_role");
+    expect(php).not.toContain("remove_cap");
+  });
+
+  it("is loaded by the plugin loader", () => {
+    const loader = files["chronicler.php"];
+    expect(loader).toContain("require_once __DIR__ . '/sheets/caps.php'");
   });
 });
 

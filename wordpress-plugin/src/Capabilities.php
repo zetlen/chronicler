@@ -5,7 +5,7 @@ namespace Chronicler;
 /**
  * Plugin-wide capabilities for the Chronicler-in-WordPress port, beyond the
  * sheets module's post-type caps (CHRONICLER_CHARACTER_CAPS in
- * sheets/post-types.php).
+ * sheets/caps.php).
  *
  * Three tiers since #159 (one coarse capability before that): granting
  * COMPOSE alone hands out session drafting and nothing else, so it is safe
@@ -40,7 +40,9 @@ final class Capabilities
     /**
      * Activation-time grant, mirroring chronicler_sheets_activate():
      * administrators get every tier out of the box; anyone else gets
-     * capabilities explicitly, tier by tier.
+     * capabilities explicitly, tier by tier. The gm role (#162,
+     * sheets/caps.php) carries COMPOSE, so a non-admin GM drafts sessions
+     * without a per-user cap grant.
      */
     public static function grant(): void
     {
