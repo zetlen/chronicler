@@ -41,6 +41,9 @@ function chronicler_sheets_gm_role_caps(): array {
     $caps = [
         'read' => true,
         \Chronicler\Capabilities::COMPOSE => true,
+        // Same media-modal trap as the player role (#163): a GM building
+        // NPC sheets hits the identical dead library without upload_files.
+        'upload_files' => true,
     ];
     foreach (CHRONICLER_CHARACTER_CAPS as $cap) {
         $caps[$cap] = true;
@@ -72,6 +75,12 @@ function chronicler_sheets_grant_caps(): void {
                 'read' => true,
                 'edit_chr_characters' => true,
                 'edit_published_chr_characters' => true,
+                // Portrait + Bio "Insert Image": the character edit screen
+                // enqueues the wp.media modal (sheets/admin.php), but core's
+                // attachment AJAX (query_attachments, upload_attachment)
+                // hard-fails without upload_files — the modal opened empty
+                // and uploads were refused (#163).
+                'upload_files' => true,
             ],
         ],
         'gm' => [
@@ -105,4 +114,56 @@ function chronicler_sheets_ensure_caps(): void {
         chronicler_sheets_grant_caps();
     }
 }
-add_action('init', 'chronicler_sheets_ensure_caps');
+
+// --- media-library scoping for the upload_files grant (#163, #173 review) ----
+
+/**
+ * Whether the current user gets the own-uploads-only media view: their only
+ * claim to the library is the plugin's own-sheet grant (a player). GMs
+ * (edit_others_chr_characters) and anyone with broader core editing keep the
+ * full library, and users without the plugin's caps are never touched.
+ */
+function chronicler_sheets_media_scoped(): bool {
+    return current_user_can('edit_chr_characters')
+        && !current_user_can('edit_others_chr_characters')
+        && !current_user_can('edit_others_posts');
+}
+
+/**
+ * Core's query_attachments AJAX — the wp.media modal's library — checks only
+ * upload_files and applies NO author scoping, so the #163 grant would let a
+ * player page through every attachment sitewide (other players' uploads,
+ * GM-only imagery, Slack mirrors from channels gated behind
+ * chronicler_slack_read). Scope players to their own uploads; uploading for
+ * their sheet keeps working.
+ */
+function chronicler_sheets_scope_attachment_query(array $query): array {
+    if (chronicler_sheets_media_scoped()) {
+        $query['author'] = get_current_user_id();
+    }
+    return $query;
+}
+
+/**
+ * The list-mode Media screen (upload.php) is a plain admin main query, not
+ * the AJAX route — apply the same scoping there.
+ */
+function chronicler_sheets_scope_media_screen($query): void {
+    if (!is_admin() || !$query->is_main_query() || ($GLOBALS['pagenow'] ?? '') !== 'upload.php') {
+        return;
+    }
+    if (chronicler_sheets_media_scoped()) {
+        $query->set('author', get_current_user_id());
+    }
+}
+
+// Not during uninstall: uninstall.php requires this file for the cap/role
+// name constants only. Registering the init re-grant there would be dead at
+// best (init has fired) and destructive at worst — were init ever re-fired,
+// the callback would fatal on the undefined CHRONICLER_VERSION (chronicler.php
+// isn't loaded) or resurrect the roles uninstall just removed (#173 review).
+if (!defined('WP_UNINSTALL_PLUGIN')) {
+    add_action('init', 'chronicler_sheets_ensure_caps');
+    add_filter('ajax_query_attachments_args', 'chronicler_sheets_scope_attachment_query');
+    add_action('pre_get_posts', 'chronicler_sheets_scope_media_screen');
+}

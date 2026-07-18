@@ -5,6 +5,7 @@ The `Version:` header in `wordpress-plugin/chronicler.php` is the repo's ONLY ve
 - `CHRONICLER_VERSION` is defined at runtime from the header via `get_file_data()` — never edit it separately.
 - `composer.json` carries no `version` field (per Composer's own recommendation); build/test scripts inject `COMPOSER_ROOT_VERSION` from the header (`scripts/pluginVersion.mjs`) so Composer doesn't warn and default to 1.0.0 inside the git-less container mount.
 - `package.json` has no `version` field either (allowed for private packages; nothing reads it).
+- `wordpress-plugin/readme.txt`'s `Stable tag` (the wp.org field, #163) is derived too: `npm run bump` rewrites it alongside the header (one shared regex in `scripts/pluginVersion.mjs` serves bump and check, and both fail — never skip — when the tag line stops parsing), and `npm run check:version` fails when the two drift (e.g. a hand-edit that touches only one). The readme's newest `== Changelog ==` heading must ALSO match the header — that entry is written by hand (bump reminds you; check:version enforces it).
 
 Any change under `wordpress-plugin/` MUST bump the version: `npm run bump patch` (fix) or `npm run bump minor` (feature) rewrites the header; rebuild the zip with `npm run build:plugin` afterward. One bump per branch is enough: the guard compares against the merge-base with `main`.
 

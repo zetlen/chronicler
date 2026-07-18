@@ -27,3 +27,28 @@ export function parseVersion(source) {
 export function pluginVersion() {
   return parseVersion(readFileSync(resolve(PLUGIN_FILE), "utf8"));
 }
+
+// The wp.org readme and its Stable tag, derived from the Version: header just
+// like CHRONICLER_VERSION (#163). ONE regex serves both the bump rewrite
+// (replace with `$1<next>`) and the drift check (parseStableTag) — two
+// hand-kept copies is how both sides silently stop matching at once. /i
+// because wp.org's readme parser lowercases header keys, so a capitalization
+// edit must not disable the tooling; the lookahead (instead of a trailing
+// \s*$) leaves the line's own EOL bytes untouched on rewrite.
+export const README_FILE = "wordpress-plugin/readme.txt";
+export const STABLE_TAG = /^(\s*stable tag:\s*)(\S+)(?=[^\S\n]*\r?$)/im;
+
+/** The readme's Stable tag, or null when none parses. */
+export function parseStableTag(source) {
+  return source.match(STABLE_TAG)?.[2] ?? null;
+}
+
+/**
+ * The newest (first) `= x.y.z =` heading under == Changelog ==, or null.
+ * check-version.mjs requires it to match the header: a changelog whose
+ * latest entry lags the shipped version reads as abandoned on wp.org.
+ */
+export function parseChangelogLatest(source) {
+  const changelog = source.split(/^==\s*Changelog\s*==\s*$/im)[1];
+  return changelog?.match(/^=\s*(\S+)\s*=\s*\r?$/m)?.[1] ?? null;
+}

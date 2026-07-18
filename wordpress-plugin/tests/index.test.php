@@ -5,9 +5,15 @@
 // here (render.test.php, included earlier by run.php, already stubbed the
 // escaping/title/thumbnail set). Included by run.php after render.test.php.
 
-// Index query + taxonomy lookups, driven by test globals.
+// Index query + taxonomy lookups, driven by test globals. Args are recorded
+// so suites can assert query SCOPE (uninstall.test.php: post_type/status/
+// meta_key), not just that results were consumed — a stub that swallows its
+// args can't catch a widened or typo'd query (#173 review).
 if (!function_exists('get_posts')) {
-    function get_posts($args = []) { return $GLOBALS['chr_test_index_ids'] ?? []; }
+    function get_posts($args = []) {
+        $GLOBALS['chr_test_get_posts_calls'][] = $args;
+        return $GLOBALS['chr_test_index_ids'] ?? [];
+    }
 }
 if (!function_exists('has_term')) {
     function has_term($term, $taxonomy, $post = null) {

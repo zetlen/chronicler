@@ -41,7 +41,7 @@ Chronicler walks you through this in wp-admin. After activating the plugin,
 go to **Chronicler → Settings**: the page shows the Slack app manifest with a
 **Copy** button and a numbered, non-technical walkthrough of Slack's
 _Create New App → From a manifest_ flow, then the field where you paste the bot
-token. 
+token.
 
 The scopes the manifest requests:
 
@@ -87,7 +87,8 @@ npm run build:plugin   # build ./chronicler.zip (runs build:admin + composer ins
 
 ```
 wordpress-plugin/        the product — one omakase plugin, slug `chronicler`
-  chronicler.php         loader: Version: header (the sole version literal)
+  chronicler.php         loader: Version: header (the canonical version literal;
+                         readme.txt's Stable tag is derived from it by npm run bump)
   blocks.php             transcript block registration + render callbacks
   message-render.php     pure message renderer (parity-tested against TS)
   generate/              ES5 generation core shared with the editor
@@ -123,9 +124,11 @@ rendering, change both sides and let the fixtures tell you when they agree.
 
 ### Plugin versioning
 
-The `Version:` header in `wordpress-plugin/chronicler.php` is the repo's ONLY
-version literal; `CHRONICLER_VERSION` is derived from it at runtime via
-`get_file_data()` — never edit the constant separately. Any change under
+The `Version:` header in `wordpress-plugin/chronicler.php` is the repo's
+canonical version literal; `CHRONICLER_VERSION` is derived from it at runtime
+via `get_file_data()` — never edit the constant separately. The wp.org
+`Stable tag` in `readme.txt` is derived too (rewritten by `npm run bump`,
+guarded against drift by `npm run check:version`). Any change under
 `wordpress-plugin/` must bump the header (`npm run bump patch` for a fix,
 `npm run bump minor` for a feature), then rebuild the zip with
 `npm run build:plugin`. A pre-commit hook enforces the bump. See AGENTS.md

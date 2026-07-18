@@ -27,7 +27,10 @@ if (!function_exists('current_user_can')) {
         if ($cap === 'edit_post') {
             return !empty($GLOBALS['chr_test_can_edit']);
         }
-        return false;
+        // Any other capability answers from a generic map (defaults to
+        // false, preserving prior behavior) — caps.test.php drives the
+        // media-scoping predicate through this.
+        return !empty($GLOBALS['chr_test_user_caps'][$cap]);
     }
 }
 

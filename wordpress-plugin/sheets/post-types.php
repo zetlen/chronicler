@@ -105,10 +105,18 @@ function chronicler_sheets_activate(): void {
     flush_rewrite_rules();
 }
 
-/** The parsed active template, request-cached. Null when unset or invalid. */
-function chronicler_sheets_active_template(): ?array {
+/**
+ * The parsed active template, request-cached. Null when unset or invalid.
+ * The memo is primed at init (chronicler_sheets_register_property_meta), so a
+ * caller that changed the active template mid-request — the configurator save
+ * — passes $reset to see its own write (#173 review).
+ */
+function chronicler_sheets_active_template(bool $reset = false): ?array {
     static $cached = false;
     static $template = null;
+    if ($reset) {
+        $cached = false;
+    }
     if ($cached) {
         return $template;
     }
@@ -118,7 +126,9 @@ function chronicler_sheets_active_template(): ?array {
     if (!$post || $post->post_type !== 'chr_template') {
         return $template = null;
     }
-    $parsed = chronicler_sheets_parse_template($post->post_content, true);
+    // Meta-backed source with legacy post_content migration (#163, see
+    // sheets/template-store.php).
+    $parsed = chronicler_sheets_parse_template(chronicler_sheets_template_source($post), true);
     if (is_wp_error($parsed)) {
         // Every sheet degrades to "no template configured" below; without
         // this line the reason would vanish with it.
@@ -132,7 +142,7 @@ function chronicler_sheets_template_for_character(int $post_id): ?array {
     if ($template_id) {
         $post = get_post($template_id);
         if ($post && $post->post_type === 'chr_template') {
-            $parsed = chronicler_sheets_parse_template($post->post_content, true);
+            $parsed = chronicler_sheets_parse_template(chronicler_sheets_template_source($post), true);
             if (!is_wp_error($parsed)) {
                 return $parsed;
             }

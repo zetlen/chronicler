@@ -4,7 +4,8 @@
  * wordpress-plugin/chronicler.php is the repo's ONLY version literal (the
  * plugin zip is the only release artifact since 4.0.0; CHRONICLER_VERSION
  * and COMPOSER_ROOT_VERSION are derived from the header, and package.json
- * has no version field).
+ * has no version field). The wp.org readme.txt's Stable tag is derived too
+ * — bump-version.mjs rewrites it, and the sync check below guards drift.
  *
  * The check: if anything under wordpress-plugin/ changed relative to the
  * base ref (merge-base with main), the header must have changed too.
@@ -20,7 +21,13 @@
 
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
-import { parseVersion, PLUGIN_FILE } from "./pluginVersion.mjs";
+import {
+  PLUGIN_FILE,
+  README_FILE,
+  parseChangelogLatest,
+  parseStableTag,
+  parseVersion,
+} from "./pluginVersion.mjs";
 
 const PLUGIN_DIR = "wordpress-plugin/";
 
@@ -46,7 +53,10 @@ function git(...cmd) {
 
 function tryGit(...cmd) {
   try {
-    return git(...cmd);
+    // stderr piped (not inherited): probing for files that may not exist at
+    // a rev — e.g. readme.txt before its first commit — is normal control
+    // flow and shouldn't print git's fatal line.
+    return execFileSync("git", cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch {
     return null;
   }
@@ -63,6 +73,13 @@ const base =
   baseArg ??
   tryGit("merge-base", "main", "HEAD") ??
   tryGit("merge-base", "origin/main", "HEAD");
+if (base === null) {
+  // tryGit pipes git's stderr, so without this line a shallow or oddly
+  // configured clone would skip the bump check with no hint it never ran.
+  console.error(
+    "⚠ check-version: no merge-base with main/origin/main — the bump check was skipped",
+  );
+}
 
 // Current content: the index in --staged mode (what this commit will
 // contain), HEAD otherwise.
@@ -100,6 +117,38 @@ if (base) {
           `  Changed: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", …" : ""}`,
       );
     }
+  }
+}
+
+// --- readme Stable tag + changelog sync (#163) -------------------------------
+// The wp.org readme's Stable tag derives from the header; a hand-edit that
+// bumps only one of the two is always a mistake. A missing readme is fine
+// (older branches predate it) — a readme whose tag doesn't PARSE is not:
+// failing open here would disable this guard and bump's rewrite in the same
+// stroke, since both use the shared STABLE_TAG regex (pluginVersion.mjs).
+const readmeSource = staged
+  ? tryGit("show", `:${README_FILE}`)
+  : tryGit("show", `HEAD:${README_FILE}`);
+if (readmeSource !== null) {
+  const stableTag = parseStableTag(readmeSource);
+  if (stableTag === null) {
+    fail(`${README_FILE} exists but has no parseable 'Stable tag:' line.`);
+  }
+  if (stableTag !== current) {
+    fail(
+      `${README_FILE} Stable tag (${stableTag}) is out of sync with the Version: header (${current}).\n` +
+        "  Fix with npm run bump patch|minor — it rewrites both.",
+    );
+  }
+  // The changelog's newest heading is a version literal nothing derives, so
+  // guard it too: wp.org renders a stable tag with no matching changelog
+  // entry as an abandoned/incomplete listing.
+  const changelogLatest = parseChangelogLatest(readmeSource);
+  if (changelogLatest !== current) {
+    fail(
+      `${README_FILE} newest changelog entry (${changelogLatest ?? "none"}) doesn't match the Version: header (${current}).\n` +
+        `  Add a '= ${current} =' entry under == Changelog ==.`,
+    );
   }
 }
 

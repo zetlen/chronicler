@@ -23,6 +23,9 @@ if (!class_exists('WP_Role')) {
         public function add_cap($cap, $grant = true) {
             $this->capabilities[$cap] = $grant;
         }
+        public function remove_cap($cap) {
+            unset($this->capabilities[$cap]);
+        }
         public function has_cap($cap) {
             return !empty($this->capabilities[$cap]);
         }
@@ -64,6 +67,9 @@ check(
     $player && $player->has_cap('edit_chr_characters') && $player->has_cap('edit_published_chr_characters')
 );
 check('player CANNOT edit others\' characters', $player && !$player->has_cap('edit_others_chr_characters'));
+// #163: the character edit screen's media modal (portrait, Bio insert-image)
+// is dead without upload_files — core's attachment AJAX hard-fails.
+check('player can upload files (media modal on the edit screen)', $player && $player->has_cap('upload_files'));
 
 $admin = get_role('administrator');
 check(
@@ -85,6 +91,7 @@ foreach (CHRONICLER_CHARACTER_CAPS as $cap) {
     if (!$gm->has_cap($cap)) { $gm_has_all_char_caps = false; break; }
 }
 check('gm holds every character capability (incl. edit_others)', $gm_has_all_char_caps);
+check('gm can upload files (same media modal on NPC sheets, #163)', $gm && $gm->has_cap('upload_files'));
 check('gm does NOT get chronicler_manage', $gm && !$gm->has_cap(Chronicler\Capabilities::MANAGE));
 check('gm does NOT get chronicler_slack_read', $gm && !$gm->has_cap(Chronicler\Capabilities::SLACK_READ));
 check('gm does NOT get manage_options', $gm && !$gm->has_cap('manage_options'));
@@ -107,6 +114,10 @@ check(
     ($GLOBALS['chronicler_test_options']['chronicler_sheets_caps_version'] ?? null) === CHRONICLER_VERSION
 );
 check(
+    'ensure grants upload_files to a pre-#163 player role',
+    get_role('player')->has_cap('upload_files')
+);
+check(
     'ensure is additive: a site admin\'s custom cap survives a re-grant',
     get_role('player')->has_cap('my_custom_cap')
 );
@@ -117,5 +128,33 @@ unset($GLOBALS['chr_test_roles']['player']); // a re-grant would recreate it
 chronicler_sheets_ensure_caps();
 check('ensure at the current version is a no-op (gate holds)', get_role('player') === null);
 
-// Leave the shared options global clean for any downstream test.
+// --- media-library scoping (#173 review): upload_files must not open the ------
+// whole library to players. Drives the ajax_query_attachments_args callback
+// through render.test.php's current_user_can stub (chr_test_is_gm answers
+// edit_others_chr_characters; chr_test_user_caps answers everything else).
+if (!function_exists('get_current_user_id')) {
+    function get_current_user_id() { return 7; }
+}
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_user_caps'] = ['edit_chr_characters' => true];
+$scoped = chronicler_sheets_scope_attachment_query(['post_type' => 'attachment']);
+check('media scoping: a player\'s library query is scoped to their own uploads', ($scoped['author'] ?? null) === 7);
+check('media scoping: the rest of the query passes through', ($scoped['post_type'] ?? null) === 'attachment');
+
+$GLOBALS['chr_test_is_gm'] = true; // edit_others_chr_characters — a GM
+$scoped = chronicler_sheets_scope_attachment_query(['post_type' => 'attachment']);
+check('media scoping: a GM browses the full library', !isset($scoped['author']));
+
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_user_caps'] = ['edit_chr_characters' => true, 'edit_others_posts' => true];
+$scoped = chronicler_sheets_scope_attachment_query([]);
+check('media scoping: broader core editors are untouched', !isset($scoped['author']));
+
+$GLOBALS['chr_test_user_caps'] = [];
+$scoped = chronicler_sheets_scope_attachment_query([]);
+check('media scoping: users without the plugin\'s caps are untouched', !isset($scoped['author']));
+
+// Leave the shared globals clean for any downstream test.
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_user_caps'] = [];
 $GLOBALS['chronicler_test_options'] = [];

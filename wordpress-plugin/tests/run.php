@@ -69,6 +69,10 @@ require __DIR__ . '/../sheets/names.php';
 require __DIR__ . '/schema.test.php';
 require __DIR__ . '/formulas.test.php';
 require __DIR__ . '/schema-drift.test.php';
+// template-store.test.php defines the shared get_post_meta/update_post_meta/
+// wp_slash/wp_unslash/WP_Post stubs — it MUST load before render/surfaces so
+// its registry-backed versions win those suites' function_exists guards.
+require __DIR__ . '/template-store.test.php';
 require __DIR__ . '/render.test.php';
 require __DIR__ . '/index.test.php';
 require __DIR__ . '/surfaces.test.php';
@@ -105,6 +109,9 @@ require __DIR__ . '/../src/Editor/Generation.php';
 require __DIR__ . '/generation.test.php';
 
 require __DIR__ . '/caps.test.php';
+// After caps: uninstall.test.php reuses its WP_Role stub (remove_cap) and the
+// role registry, and drives uninstall.php with WP_UNINSTALL_PLUGIN defined.
+require __DIR__ . '/uninstall.test.php';
 
 $n = $GLOBALS['chronicler_test_count'];
 $f = $GLOBALS['chronicler_test_failures'];

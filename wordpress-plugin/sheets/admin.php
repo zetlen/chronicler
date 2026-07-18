@@ -13,8 +13,8 @@ function chronicler_sheets_admin_menu(): void {
     // The returned hook suffix gates the editor-bundle enqueue below.
     $GLOBALS['chronicler_sheets_configurator_hook'] = add_submenu_page(
         'chronicler',
-        'Game System',
-        'Game System',
+        __('Game System', 'chronicler'),
+        __('Game System', 'chronicler'),
         'manage_options',
         'chronicler-sheet-template',
         'chronicler_sheets_render_configurator'
@@ -62,7 +62,7 @@ add_action('admin_enqueue_scripts', 'chronicler_sheets_configurator_assets');
 
 function chronicler_sheets_render_configurator(): void {
     if (!current_user_can('manage_options')) {
-        wp_die('Insufficient permissions.');
+        wp_die(esc_html__('Insufficient permissions.', 'chronicler'));
     }
 
     $notice = '';
@@ -75,29 +75,52 @@ function chronicler_sheets_render_configurator(): void {
             $error = $parsed->get_error_message();
         } else {
             $post_id = (int) get_option('chronicler_active_template', 0);
+            // The source goes to the chr_template_config meta, never
+            // post_content (#163 — kses mangles `>=` in formulas for users
+            // without unfiltered_html; see sheets/template-store.php), and
+            // post_content is cleared so meta is the one source of truth.
             $data = [
                 'post_type' => 'chr_template',
                 'post_status' => 'publish',
                 'post_title' => $parsed['system'],
-                'post_content' => wp_slash($json),
+                'post_content' => '',
             ];
-            if ($post_id && get_post($post_id)) {
+            // Same target guard as post-types.php's readers (#173 review): a
+            // stale option (partial restore, imported IDs) must not let this
+            // branch convert-and-blank a post the plugin doesn't own —
+            // anything that isn't a chr_template gets a fresh post instead.
+            $existing = $post_id ? get_post($post_id) : null;
+            if ($existing && $existing->post_type === 'chr_template') {
                 $data['ID'] = $post_id;
                 $result = wp_update_post($data, true);
                 if (is_wp_error($result)) {
                     $error = $result->get_error_message();
+                } elseif (!chronicler_sheets_save_template_source($post_id, $json)) {
+                    // The read-back failed: meta still holds the previous
+                    // source, so sheets keep rendering the old template —
+                    // say so instead of announcing a save that didn't land.
+                    $error = __('WordPress could not store the template configuration.', 'chronicler');
                 } else {
-                    $notice = 'Template saved.';
+                    $notice = __('Template saved.', 'chronicler');
                 }
             } else {
                 $result = wp_insert_post($data, true);
                 if (is_wp_error($result)) {
                     $error = $result->get_error_message();
                 } elseif (!$result) {
-                    $error = 'WordPress could not save the template.';
+                    $error = __('WordPress could not save the template.', 'chronicler');
+                } elseif (!chronicler_sheets_save_template_source($result, $json)) {
+                    // Never activate (or keep) a post whose config failed to
+                    // store — an active template with an empty source would
+                    // degrade every sheet on the site.
+                    wp_delete_post($result, true);
+                    $error = __('WordPress could not store the template configuration.', 'chronicler');
                 } else {
+                    // Meta is verified before the option makes the post live,
+                    // so no request can resolve an active template whose
+                    // source is still empty.
                     update_option('chronicler_active_template', $result);
-                    $notice = 'Template saved.';
+                    $notice = __('Template saved.', 'chronicler');
                 }
             }
         }
@@ -105,12 +128,22 @@ function chronicler_sheets_render_configurator(): void {
 
     $post_id = (int) get_option('chronicler_active_template', 0);
     $post = $post_id ? get_post($post_id) : null;
+    if ($post && $post->post_type !== 'chr_template') {
+        // Same guard as post-types.php's readers — and doubly needed here
+        // since #163: chronicler_sheets_template_source() migrates
+        // post_content into meta as a side effect, which must never touch a
+        // foreign post a stale option points at (#173 review).
+        $post = null;
+    }
     $json = isset($_POST['chronicler_template_json'])
         ? wp_unslash($_POST['chronicler_template_json'])
-        : ($post ? $post->post_content : '');
-    $template = chronicler_sheets_active_template();
+        : ($post ? chronicler_sheets_template_source($post) : '');
+    // The static memo was primed at init (register_property_meta), i.e.
+    // pre-save: after a successful save, re-read so the Layout preview shows
+    // what was just stored, not the previous request state (#173 review).
+    $template = chronicler_sheets_active_template($notice !== '');
 
-    echo '<div class="wrap"><h1>Game System</h1>';
+    echo '<div class="wrap"><h1>' . esc_html__('Game System', 'chronicler') . '</h1>';
     if ($notice) {
         echo '<div class="notice notice-success"><p>' . esc_html($notice) . '</p></div>';
     }
@@ -119,14 +152,14 @@ function chronicler_sheets_render_configurator(): void {
     }
     echo '<form method="post">';
     wp_nonce_field('chronicler_sheet_template');
-    echo '<p>Describe the game system in YAML (or JSON). The editor suggests fields as you type, explains them on hover, and checks the template before you save. Press Ctrl-Space in the editor and help will pop up at your cursor. Invalid templates are rejected, never stored.</p>';
+    echo '<p>' . esc_html__('Describe the game system in YAML (or JSON). The editor suggests fields as you type, explains them on hover, and checks the template before you save. Press Ctrl-Space in the editor and help will pop up at your cursor. Invalid templates are rejected, never stored.', 'chronicler') . '</p>';
     echo '<textarea name="chronicler_template_json" rows="24" style="width:100%;font-family:monospace" spellcheck="false">'
         . esc_textarea($json) . '</textarea>';
-    echo '<p><button class="button button-primary">Validate &amp; Save</button></p>';
+    echo '<p><button class="button button-primary">' . esc_html__('Validate & Save', 'chronicler') . '</button></p>';
     echo '</form>';
 
     if ($template !== null) {
-        echo '<h2>Layout preview — ' . esc_html($template['system']) . '</h2>';
+        echo '<h2>' . esc_html__('Layout preview', 'chronicler') . ' — ' . esc_html($template['system']) . '</h2>';
         foreach ($template['layout'] as $section) {
             echo '<h3>' . esc_html($section['section']) . '</h3><ul>';
             foreach ($section['properties'] as $pid) {
