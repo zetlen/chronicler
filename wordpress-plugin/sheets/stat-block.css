@@ -1,0 +1,154 @@
+/* Stat Block meta box. Numerics sit on one compact line; list entries are
+   contained cards with labeled columns, longtext fields spanning full width. */
+
+.chr-stat-block {
+  display: grid;
+  gap: 20px;
+  padding-top: 8px;
+}
+
+.chr-stat-section {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.chr-stat-section__title {
+  width: 100%;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #dcdcde;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1d2327;
+}
+
+/* Compact stats (numbers, tracks, toggles, selects) flow side by side;
+   everything else takes the full row. */
+.chr-stat-section__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}
+
+.chr-stat {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.chr-stat--number,
+.chr-stat--track,
+.chr-stat--counter,
+.chr-stat--toggle,
+.chr-stat--select {
+  flex: 0 1 auto;
+  min-width: 110px;
+}
+
+.chr-stat__label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.chr-input--number {
+  width: 5.5em;
+}
+
+.chr-detail-input {
+  display: block;
+  margin-top: 4px;
+  width: 100%;
+  min-width: 16rem;
+}
+
+.chr-stat .description {
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+/* "Insert Image" sits directly above its longtext field's editor. */
+.chr-insert-image {
+  margin-bottom: 6px;
+}
+
+.chr-checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 16px;
+}
+
+.chr-list-rows {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.chr-list-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 14px;
+  padding: 12px 12px 14px;
+  border: 1px solid #dcdcde;
+  border-left: 4px solid #997500;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.chr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* display:flex above would beat the hidden attribute without this. */
+.chr-field[hidden] {
+  display: none;
+}
+
+.chr-field__name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #646970;
+}
+
+/* Longtext and the entry's display name (first field, by convention) span
+   the full card width; other text fields stay in the column grid. */
+.chr-field--longtext,
+.chr-field:first-of-type {
+  grid-column: 1 / -1;
+}
+
+.chr-field input[type="text"] {
+  width: 100%;
+}
+
+.chr-field--toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.chr-field--toggle .chr-field__name {
+  order: 1;
+}
+
+.chr-list-row .chr-list-remove {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  grid-column: auto;
+}
+
+/* First field (the entry's display name) gets visual priority. */
+.chr-list-row .chr-field:first-of-type input {
+  font-weight: 600;
+}

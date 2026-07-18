@@ -1,0 +1,16 @@
+# rules was removed 2026-07-13 — the schema rejects it as an unknown key.
+# (The PHP parser deliberately ignores it on read, so stored templates
+# survive; the editor and this corpus keep authors from writing new ones.)
+system: Rules Are Gone
+version: 1
+properties:
+  - id: harm
+    label: Harm
+    type: track
+    length: 7
+  - id: doomed
+    label: Doomed
+    type: toggle
+rules:
+  - when: { prop: harm, gte: 7 }
+    set: { prop: doomed, value: true }

@@ -1,0 +1,7 @@
+system: Empty Options
+version: 1
+properties:
+  - id: moves
+    label: Moves
+    type: select
+    options: []

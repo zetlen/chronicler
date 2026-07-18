@@ -1,0 +1,28 @@
+# Chronicler's Slack app manifest — universal, scopes-only (since 4.0.0).
+# Surfaced in wp-admin → Chronicler → Settings; copy it there to create the app.
+display_information:
+  name: Chronicler
+  description: The Matter of Slack
+  background_color: "#997500"
+  long_description: Your slack channel logs contain lore and that lore must be recorded. And then illuminated. Contemporary primary sources are unreliable, so read with a grain of salt; there may have been later alterations.
+
+features:
+  bot_user:
+    display_name: Chronicler
+    always_online: false
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history # read messages in public channels
+      - channels:read    # list public channels & resolve channel names
+      - groups:history   # read messages in private channels the bot is in
+      - groups:read      # list private channels & resolve names
+      - users:read       # resolve user IDs to display names
+      - emoji:read       # workspace custom emoji, rendered in transcripts
+      - files:read       # read file/image bytes for the image mirror
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

@@ -1,0 +1,6 @@
+system: Bad Id
+version: 1
+properties:
+  - id: Cool Stat
+    label: Cool
+    type: number

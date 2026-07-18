@@ -1,0 +1,201 @@
+{
+  "parity": [
+    {
+      "name": "full bubble",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "Daisy \"D\" <3 & co",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "avatarHtml": "<div class=\"slk-msg__avatar\"><span class=\"slk-avatar\">DC</span></div>",
+        "headHtml": "<span class=\"slk-msg__time\">Jun 10, 2021, 3:00 PM</span>",
+        "bodyHtml": "<strong>hi</strong> <span class=\"slk-quote\">q<br></span>",
+        "images": [
+          {
+            "src": "https://wp.example/a.png",
+            "alt": "a & b",
+            "caption": "a & b"
+          }
+        ],
+        "extrasHtml": "<div class=\"slk-files\">F</div>",
+        "reactionsHtml": "<div class=\"slk-reactions\">R</div>"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  <div class=\"slk-msg__avatar\"><span class=\"slk-avatar\">DC</span></div>\n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">Daisy \"D\" &lt;3 &amp; co</span><span class=\"slk-msg__time\">Jun 10, 2021, 3:00 PM</span></div>\n    <div class=\"slk-msg__body\"><strong>hi</strong> <span class=\"slk-quote\">q<br></span><div class=\"slk-images\"><figure class=\"slk-image\"><img src=\"https://wp.example/a.png\" alt=\"a &amp; b\" loading=\"lazy\"><figcaption>a &amp; b</figcaption></figure></div><div class=\"slk-files\">F</div></div>\n    <div class=\"slk-reactions\">R</div>\n  </div>\n</div>"
+    },
+    {
+      "name": "minimal bubble (pruned attributes)",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "A",
+        "authorColor": "#1a865b",
+        "authorColorDark": "#1f9d6b"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\" style=\"--slk-id:#1a865b;--slk-id-dark:#1f9d6b\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\"></div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "rule classes on root",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text harm-taken",
+        "authorName": "A",
+        "authorColor": "#c0392b",
+        "authorColorDark": "#d85d50",
+        "bodyHtml": "ouch"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text harm-taken\" style=\"--slk-id:#c0392b;--slk-id-dark:#d85d50\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\">ouch</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "deep-link anchor id",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "anchorId": "msg-1783480170612229",
+        "authorName": "A",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "bodyHtml": "anchor me"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\" id=\"msg-1783480170612229\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\">anchor me</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "permalink affordance (timestamps hidden)",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "anchorId": "msg-1783480170612229",
+        "authorName": "A",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "headHtml": "<a class=\"slk-msg__permalink\" href=\"#msg-1783480170612229\" aria-label=\"Copy link to this message\"></a>",
+        "bodyHtml": "anchor me"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\" id=\"msg-1783480170612229\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span><a class=\"slk-msg__permalink\" href=\"#msg-1783480170612229\" aria-label=\"Copy link to this message\"></a></div>\n    <div class=\"slk-msg__body\">anchor me</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "variant: important",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "A",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "variants": [
+          "important"
+        ],
+        "bodyHtml": "look here"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text slk-msg--important\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\">look here</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "variant: ooc swaps author to realName",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "Graz the Bold",
+        "realName": "jess",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "variants": [
+          "ooc"
+        ],
+        "bodyHtml": "5 xp each"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text slk-msg--ooc\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">jess</span></div>\n    <div class=\"slk-msg__body\">5 xp each</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "variant: ooc without realName keeps the character name",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "Graz the Bold",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "variants": [
+          "ooc"
+        ],
+        "bodyHtml": "still in character"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text slk-msg--ooc\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">Graz the Bold</span></div>\n    <div class=\"slk-msg__body\">still in character</div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "variants: ooc + important, unknown ignored",
+      "attributes": {
+        "rootClass": "slk-msg slk-msg--text",
+        "authorName": "Graz the Bold",
+        "realName": "jess",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "variants": [
+          "important",
+          "bogus",
+          "ooc"
+        ],
+        "bodyHtml": "wrap-up"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text slk-msg--ooc slk-msg--important\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">jess</span></div>\n    <div class=\"slk-msg__body\">wrap-up</div>\n    \n  </div>\n</div>"
+    }
+  ],
+  "defensive": [
+    {
+      "name": "v2 fallback passes html through untouched",
+      "attributes": {
+        "html": "<div class=\"slk-system\">joined</div>"
+      },
+      "expected": "<div class=\"slk-system\">joined</div>"
+    },
+    {
+      "name": "empty attributes render an empty v2 fallback",
+      "attributes": {},
+      "expected": ""
+    },
+    {
+      "name": "className merges after rootClass",
+      "attributes": {
+        "authorName": "A",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "rootClass": "slk-msg slk-msg--text",
+        "className": "gm-note"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text gm-note\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\"></div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "invalid hex drops the identity style",
+      "attributes": {
+        "authorName": "A",
+        "authorColor": "javascript:alert(1)",
+        "rootClass": "slk-msg slk-msg--text"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\"></div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "malformed images entries are skipped",
+      "attributes": {
+        "authorName": "A",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "rootClass": "slk-msg slk-msg--text",
+        "images": [
+          {
+            "notSrc": true
+          },
+          {
+            "src": "https://wp.example/ok.png",
+            "alt": "ok"
+          }
+        ]
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">A</span></div>\n    <div class=\"slk-msg__body\"><div class=\"slk-images\"><figure class=\"slk-image\"><img src=\"https://wp.example/ok.png\" alt=\"ok\" loading=\"lazy\"><figcaption>ok</figcaption></figure></div></div>\n    \n  </div>\n</div>"
+    },
+    {
+      "name": "variant class + className merge in order (ooc swaps author)",
+      "attributes": {
+        "authorName": "Graz the Bold",
+        "realName": "jess",
+        "authorColor": "#4674b8",
+        "authorColorDark": "#5e86c2",
+        "rootClass": "slk-msg slk-msg--text",
+        "variants": [
+          "ooc"
+        ],
+        "className": "gm-note",
+        "bodyHtml": "wrap-up"
+      },
+      "expected": "<div class=\"slk-msg slk-msg--text slk-msg--ooc gm-note\" style=\"--slk-id:#4674b8;--slk-id-dark:#5e86c2\">\n  \n  <div class=\"slk-msg__main\">\n    <div class=\"slk-msg__head\"><span class=\"slk-msg__author\">jess</span></div>\n    <div class=\"slk-msg__body\">wrap-up</div>\n    \n  </div>\n</div>"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+system: Formula Demo
+version: 1
+properties:
+  - id: vigor
+    label: Vigor
+    type: number
+    min: 0
+    max: 12
+  - id: armor
+    label: Armor
+    type: number
+    min: 0
+  - id: harm
+    label: Harm
+    type: track
+    length: 7
+  - id: toughness
+    label: Toughness
+    type: number
+    max: 12
+    derived: |
+      floor(vigor / 2)
+        + 2
+        + armor
+layout:
+  - section: Ratings
+    properties: [vigor, armor]
+  - section: Status
+    properties: [harm]

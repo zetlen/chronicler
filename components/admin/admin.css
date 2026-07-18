@@ -1,0 +1,50 @@
+/*
+ * Tailwind 4 entry for the wp-admin session-editor bundle (#96), compiled by
+ * scripts/build-admin-bundle.mjs into wordpress-plugin/admin/dist/.
+ *
+ * The bundle renders inside wp-admin, so EVERYTHING is scoped under
+ * #chronicler-admin-root: preflight and the generated utilities are nested
+ * under the root selector (Tailwind flattens the nesting), and the build
+ * script rewrites the residual `:root, :host` theme-variable block onto the
+ * root element too. Nothing may restyle wp-admin chrome.
+ *
+ * Fonts are the Tailwind default system stacks — no next/font here.
+ */
+
+@layer theme, base, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+
+@layer base {
+  #chronicler-admin-root {
+    @import "tailwindcss/preflight.css";
+  }
+
+  /* Preflight's html/body rules die under the scope (there is no
+     #chronicler-admin-root html); restate those page-level defaults on the
+     root itself so the app doesn't inherit wp-admin's typography. */
+  #chronicler-admin-root {
+    font-family: var(
+      --default-font-family,
+      ui-sans-serif,
+      system-ui,
+      sans-serif
+    );
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+  }
+}
+
+@layer utilities {
+  #chronicler-admin-root {
+    @import "tailwindcss/utilities.css" source(none);
+  }
+}
+
+/* Only the admin components (plus the shared bits they import) feed class
+   detection — the Next.js app's components are not part of this bundle. */
+@source "./";
+@source "../Group.tsx";
+@source "../CustomCssEditor.tsx";

@@ -1,0 +1,5 @@
+system: No Label
+version: 1
+properties:
+  - id: cool
+    type: number

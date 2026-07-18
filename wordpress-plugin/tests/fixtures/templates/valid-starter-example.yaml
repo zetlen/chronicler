@@ -1,0 +1,132 @@
+# A character-sheet template, shown here for Monster of the Week.
+# The editor suggests keys and values as you type (Ctrl-Space asks for
+# suggestions anywhere), and explains any key when you hover it.
+system: Monster of the Week
+version: 1
+
+properties:
+  # The five rolled ratings. A negative min renders values signed (+2 / -1),
+  # and "detail" is the note shown under the stat — characters may override it.
+  - id: charm
+    label: Charm
+    type: number
+    min: -1
+    max: 3
+    detail: "manipulate someone, use magic"
+  - id: cool
+    label: Cool
+    type: number
+    min: -1
+    max: 3
+    detail: "act under pressure, help out"
+  - id: sharp
+    label: Sharp
+    type: number
+    min: -1
+    max: 3
+    detail: "investigate a mystery, read a bad situation"
+  - id: tough
+    label: Tough
+    type: number
+    min: -1
+    max: 3
+    detail: "kick some ass, protect someone"
+  - id: weird
+    label: Weird
+    type: number
+    min: -1
+    max: 3
+    detail: "use magic, big magic"
+
+  # A track renders as fillable boxes. "live: true" lets players change it
+  # from the play surfaces, not just wp-admin.
+  - id: harm
+    label: Harm
+    type: track
+    length: 7
+    live: true
+  - id: luck
+    label: Luck
+    type: track
+    length: 7
+    live: true
+
+  # Unstable and Doomed are marked and cleared at the table: big harm sets
+  # them, and stabilizing — an event, not a harm level — clears Unstable, so
+  # current Harm can't tell you whether a hunter is still unstable. That makes
+  # both plain toggles; a `derived` formula fits conditions that ARE a pure
+  # function of current values (a D&D-style ability modifier, say).
+  - id: unstable
+    label: Unstable
+    type: toggle
+  - id: doomed
+    label: Doomed
+    type: toggle
+
+  # Exactly one choice from options.
+  - id: hunter_type
+    label: Hunter Type
+    type: select
+    options:
+      - { id: chosen, label: The Chosen }
+      - { id: expert, label: The Expert }
+      - { id: flake, label: The Flake }
+      - { id: monstrous, label: The Monstrous }
+      - { id: mundane, label: The Mundane }
+
+  # Any subset of options, each checked on or off.
+  - id: moves
+    label: Moves
+    type: checklist
+    options:
+      - { id: the_big_entrance, label: The Big Entrance }
+      - { id: nine_lives, label: Nine Lives }
+      - { id: crime_pays, label: Crime Pays }
+
+  # A repeatable list; each entry gets these fields. "when" gates a field
+  # behind an expression over the entry's other fields — a bare toggle id
+  # is the common case.
+  - id: gear
+    label: Gear
+    type: list
+    entry_label: Item
+    fields:
+      - id: name
+        label: Name
+        type: text
+      - id: is_weapon
+        label: Weapon?
+        type: toggle
+      - id: harm_rating
+        label: Harm
+        type: number
+        min: 0
+        max: 5
+        when: is_weapon
+
+  # always_show keeps an empty property visible as a prompt instead of
+  # hiding the blank row. Audience flags: none is public; owner_only shows
+  # solely to the owning player and game masters (player-private notes);
+  # gm_only renders solely for game masters.
+  - id: player_notes
+    label: Player Notes
+    type: longtext
+    always_show: true
+    owner_only: true
+  - id: gm_notes
+    label: GM Notes
+    type: longtext
+    gm_only: true
+
+layout:
+  # Ordered sections of property ids. A masthead section renders inside the
+  # header card; anything never placed lands in a trailing "Other" section.
+  - section: Hunter
+    masthead: true
+    properties: [hunter_type]
+  - section: Ratings
+    properties: [charm, cool, sharp, tough, weird]
+  - section: Status
+    properties: [harm, luck, unstable, doomed]
+  - section: Moves & Gear
+    properties: [moves, gear]

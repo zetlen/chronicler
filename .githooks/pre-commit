@@ -1,0 +1,19 @@
+#!/bin/sh
+# Activated by `npm install` (the prepare script sets core.hooksPath).
+# core.hooksPath is a relative, repo-shared setting and .githooks is tracked,
+# so this fires in linked worktrees too — but a fresh worktree may have no
+# node_modules, so the lint step skips with a warning there (the version
+# guard needs only node and always runs). Bypass a false positive with
+# `git commit --no-verify`.
+
+# Version-bump guard (#77): plugin changes must bump chronicler.php.
+node scripts/check-version.mjs --staged || exit 1
+
+# Lint when the commit touches JS/TS (~2s; skipped for PHP-only commits).
+if git diff --cached --name-only --diff-filter=d | grep -qE '\.[cm]?[jt]sx?$'; then
+  if [ -d node_modules ]; then
+    npm run lint || exit 1
+  else
+    echo "⚠ pre-commit: no node_modules — skipping lint (run npm install to enable)" >&2
+  fi
+fi

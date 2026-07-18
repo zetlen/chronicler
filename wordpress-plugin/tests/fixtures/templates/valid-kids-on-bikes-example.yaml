@@ -1,0 +1,144 @@
+# A second worked example, for Kids on Bikes — deliberately a different shape
+# than the Monster of the Week starter (valid-starter-example.yaml). MOTW's
+# five ratings are small integers; Kids on Bikes rates Brains, Fight, Flight,
+# Charm and Grit by die size (d4 through d12), one size per stat. There's no
+# "die" property type, so each stat is a select whose options are the five
+# die sizes — the schema doesn't know (or enforce) that a real character
+# assigns each size to exactly one stat; that bookkeeping stays with the
+# table, same as it would with a paper sheet.
+system: Kids on Bikes
+version: 1
+
+properties:
+  - id: brains
+    label: Brains
+    type: select
+    detail: "puzzling out a problem, remembering something, thinking it through"
+    options:
+      - { id: d4, label: d4 }
+      - { id: d6, label: d6 }
+      - { id: d8, label: d8 }
+      - { id: d10, label: d10 }
+      - { id: d12, label: d12 }
+  - id: fight
+    label: Fight
+    type: select
+    detail: "getting physical, using a weapon or tool"
+    options:
+      - { id: d4, label: d4 }
+      - { id: d6, label: d6 }
+      - { id: d8, label: d8 }
+      - { id: d10, label: d10 }
+      - { id: d12, label: d12 }
+  - id: flight
+    label: Flight
+    type: select
+    detail: "running, hiding, getting away fast"
+    options:
+      - { id: d4, label: d4 }
+      - { id: d6, label: d6 }
+      - { id: d8, label: d8 }
+      - { id: d10, label: d10 }
+      - { id: d12, label: d12 }
+  - id: charm
+    label: Charm
+    type: select
+    detail: "talking someone around, reading the room"
+    options:
+      - { id: d4, label: d4 }
+      - { id: d6, label: d6 }
+      - { id: d8, label: d8 }
+      - { id: d10, label: d10 }
+      - { id: d12, label: d12 }
+  - id: grit
+    label: Grit
+    type: select
+    detail: "toughing out fear, pain, or a bad situation"
+    options:
+      - { id: d4, label: d4 }
+      - { id: d6, label: d6 }
+      - { id: d8, label: d8 }
+      - { id: d10, label: d10 }
+      - { id: d12, label: d12 }
+
+  # Kids on Bikes' shared party Luck die has no home here: it belongs to the
+  # whole table for the session, not to one character, and this schema only
+  # models per-character properties. Left out rather than faked as a
+  # per-character stat that would just drift out of sync with the others.
+
+  - id: age
+    label: Age
+    type: number
+    min: 8
+    max: 17
+    detail: "how old the kid is"
+
+  # Advantages and Complications are short trait phrases, not a fixed list —
+  # a list property fits better than select/checklist since players write
+  # their own.
+  - id: advantages
+    label: Advantages
+    type: list
+    entry_label: Advantage
+    fields:
+      - id: name
+        label: Name
+        type: text
+      - id: note
+        label: When it matters
+        type: text
+  - id: complications
+    label: Complications
+    type: list
+    entry_label: Complication
+    fields:
+      - id: name
+        label: Name
+        type: text
+      - id: note
+        label: When it matters
+        type: text
+
+  # Special (a sixth, supernatural-flavored rating some kids have) is
+  # optional per character. There's no way to hide a top-level property
+  # conditionally, so a zero-or-one-entry list stands in for "optional":
+  # an empty list reads as "no Special," same as an unticked toggle would,
+  # without needing conditional visibility the schema doesn't have.
+  - id: special
+    label: Special
+    type: list
+    entry_label: Special
+    fields:
+      - id: rating
+        label: Rating
+        type: select
+        options:
+          - { id: d4, label: d4 }
+          - { id: d6, label: d6 }
+          - { id: d8, label: d8 }
+          - { id: d10, label: d10 }
+          - { id: d12, label: d12 }
+      - id: description
+        label: Description
+        type: longtext
+
+  - id: bio
+    label: Bio
+    type: longtext
+    always_show: true
+    detail: "who they are outside the adventure — family, interests, the everyday version of this kid"
+  - id: gm_notes
+    label: GM Notes
+    type: longtext
+    gm_only: true
+
+layout:
+  - section: Kid
+    masthead: true
+    properties: [age]
+  - section: Stats
+    properties: [brains, fight, flight, charm, grit]
+  - section: Traits
+    properties: [advantages, complications, special]
+  - section: Background
+    properties: [bio, gm_notes]

@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://chronicler.example/template.schema.json",
+  "title": "Chronicler game-system template",
+  "description": "A character-sheet template: the properties a character has and how they are laid out. Authored as YAML or JSON on the Game System admin page.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["system", "version", "properties"],
+  "properties": {
+    "system": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The game system's name, e.g. \"Monster of the Week\". Shown as the template title."
+    },
+    "version": {
+      "type": "integer",
+      "description": "Integer schema version for this system. Raise it when you change the shape of the template."
+    },
+    "properties": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The stats, tracks, notes and lists a character of this system has.",
+      "items": { "$ref": "#/definitions/property" }
+    },
+    "layout": {
+      "type": "array",
+      "description": "Ordered sections grouping property ids for display. Any property left out falls into a trailing \"Other\" section.",
+      "items": { "$ref": "#/definitions/section" }
+    }
+  },
+  "x-chronicler-formula": {
+    "refTypes": ["number", "track", "counter", "toggle", "select", "text"],
+    "functions": [
+      {
+        "name": "floor",
+        "args": "x",
+        "doc": "Round down to the nearest whole number — e.g. `floor(7 / 2)` is 3. The usual choice for \"round down\" game math."
+      },
+      {
+        "name": "ceil",
+        "args": "x",
+        "doc": "Round up to the nearest whole number — e.g. `ceil(7 / 2)` is 4."
+      },
+      {
+        "name": "round",
+        "args": "x",
+        "doc": "Round to the nearest whole number — e.g. `round(2.5)` is 3."
+      },
+      {
+        "name": "min",
+        "args": "a, b, …",
+        "doc": "The smallest of the values — e.g. `min(harm[\"current\"], 3)` never exceeds 3."
+      },
+      {
+        "name": "max",
+        "args": "a, b, …",
+        "doc": "The largest of the values — e.g. `max(strength, dexterity)`."
+      }
+    ]
+  },
+  "definitions": {
+    "property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable machine id: lowercase, starts with a letter, letters/digits/underscore only. Referenced by layout and formulas."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable name shown on the sheet."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["number", "track", "counter", "toggle", "select", "checklist", "text", "longtext", "list"],
+          "description": "What kind of value this property holds.",
+          "markdownEnumDescriptions": [
+            "A whole number, optionally bounded by `min`/`max`. Negative ranges render signed (e.g. +2).",
+            "A 0..`length` filled-boxes track (Harm, Luck).",
+            "A running count from `start`, optionally capped by `max`.",
+            "An on/off flag.",
+            "Exactly one choice from `options`.",
+            "Any subset of `options`, each checked on or off.",
+            "A short single-line text field.",
+            "A multi-line rich-text field.",
+            "A repeatable list of entries, each with its own `fields`. Edited in wp-admin only."
+          ]
+        },
+        "live": {
+          "type": "boolean",
+          "description": "Players may change this from the play surfaces (front-end / /sheet). Never combine with gm_only."
+        },
+        "gm_only": {
+          "type": "boolean",
+          "description": "Rendered only for a GM; omitted from the page entirely for players and the public."
+        },
+        "owner_only": {
+          "type": "boolean",
+          "description": "Rendered only for the character's author (the owning player) and GMs; omitted from the page entirely for fellow players and the public. Never combine with gm_only."
+        },
+        "always_show": {
+          "type": "boolean",
+          "description": "Keep the property on the sheet even when empty (e.g. Notes) instead of hiding a blank row."
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "System-default note for what the property does (e.g. the moves a rating rolls). Characters may override it."
+        },
+        "derived": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A formula (Symfony Expression Language) computed on every read from other properties. Supported on number and toggle. Never stored or directly editable. Reference properties by bare id; track/counter parts use brackets, e.g. harm[\"current\"]. Functions: floor, ceil, round, min, max."
+        },
+        "min": { "type": "integer", "description": "Lower bound for a number property." },
+        "max": { "type": "integer", "description": "Upper bound for a number or counter." },
+        "start": { "type": "integer", "description": "Starting value for a counter." },
+        "length": { "type": "integer", "minimum": 1, "description": "Number of boxes in a track." },
+        "options": {
+          "type": "array",
+          "description": "Choices for a select or checklist.",
+          "items": { "$ref": "#/definitions/option" }
+        },
+        "fields": {
+          "type": "array",
+          "description": "Per-entry fields for a list property.",
+          "items": { "$ref": "#/definitions/listField" }
+        },
+        "entry_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Singular noun for one list entry (e.g. \"Item\")."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "track" } } },
+          "then": { "required": ["length"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "select" } } },
+          "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "checklist" } } },
+          "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "list" } } },
+          "then": { "required": ["fields"], "properties": { "fields": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Machine id for this choice." },
+        "label": { "type": "string", "description": "Human-readable choice text." }
+      }
+    },
+    "listField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Machine id for this field within a list entry." },
+        "label": { "type": "string", "minLength": 1, "description": "Human-readable field name." },
+        "type": {
+          "type": "string",
+          "enum": ["text", "longtext", "number", "toggle", "select"],
+          "description": "Value kind for this list field.",
+          "markdownEnumDescriptions": [
+            "A short single-line text field.",
+            "A multi-line text field (compact textarea inside an entry).",
+            "A whole number, optionally bounded by `min`/`max`.",
+            "An on/off flag. Other fields can appear only when it's on, via `when`.",
+            "Exactly one choice from `options`."
+          ]
+        },
+        "when": { "type": "string", "minLength": 1, "description": "An expression (same language as `derived`) over this entry's other fields — the field shows only while it's true. A bare toggle id works: `when: is_weapon`." },
+        "min": { "type": "integer" },
+        "max": { "type": "integer" },
+        "options": { "type": "array", "items": { "$ref": "#/definitions/option" } }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "select" } } },
+          "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "properties"],
+      "properties": {
+        "section": { "type": "string", "description": "Section heading." },
+        "properties": {
+          "type": "array",
+          "description": "Property ids placed in this section, in order.",
+          "items": { "type": "string" }
+        },
+        "masthead": { "type": "boolean", "description": "Render inside the header card instead of as a body section." }
+      }
+    }
+  }
+}

@@ -1,0 +1,1203 @@
+openapi: 3.1.0
+info:
+  title: Chronicler REST API
+  version: 1.0.0
+  description: |
+    The `chronicler/v1` WordPress REST namespace: session and rule storage,
+    app settings, the stateless Slack proxy, the image mirror, and character
+    sheets. This is the external-client contract behind the wp-admin session
+    editor and any companion app (see Gitea #112/#113).
+
+    **Versioning policy:** changes within `chronicler/v1` are additive only —
+    new routes, new optional parameters, new response fields. Anything
+    breaking gets a new namespace. `info.version` tracks this document, not
+    the plugin.
+
+    **Authentication.** The core routes (slack, sessions, rules, image,
+    settings, import) require a WordPress user holding the operation's
+    tier: `chronicler_compose` for session/image routes and the reads the
+    editor depends on, `chronicler_manage` for settings/rule/import
+    writes, and `chronicler_slack_read` for the Slack proxy. The
+    character-sheet routes carry their own per-route permissions, named on
+    each operation: the sheet read is public, and the other three check
+    WordPress capabilities on the authenticated user (`edit_post` on the
+    character, `edit_others_chr_characters`, `manage_options`). External
+    clients authenticate with
+    [Application Passwords](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/)
+    over HTTPS (HTTP Basic). The wp-admin bundle uses same-origin cookie +
+    `X-WP-Nonce` auth instead. Setup for a dedicated bot user is documented
+    in `docs/rest-api.md`.
+
+    **Errors** are WordPress-shaped (`Error` schema): `{code, message,
+    data}` with the HTTP status inside `data.status`. Unauthenticated and
+    unauthorized requests answer `rest_forbidden` (401 without credentials,
+    403 with insufficient ones). The Slack proxy passes Slack's own rate
+    limiting through as `429` whose body is the `RateLimited` schema —
+    `retry_after` (seconds) at the TOP LEVEL of the body, not inside
+    `data` — the CLIENT waits and retries; the server never sleeps.
+
+    **URL forms.** Pretty permalinks serve the API under
+    `/wp-json/chronicler/v1`; sites without them use
+    `/?rest_route=/chronicler/v1/...` (both server entries below).
+servers:
+  - url: "{siteUrl}/wp-json/chronicler/v1"
+    description: Pretty-permalink form.
+    variables:
+      siteUrl:
+        default: https://example.com
+  - url: "{siteUrl}/?rest_route=/chronicler/v1"
+    description: Plain-permalink form (query-string routing).
+    variables:
+      siteUrl:
+        default: https://example.com
+security:
+  - basicAuth: []
+tags:
+  - name: sessions
+    description: Stored Sessions — a channel + time range with transformed message payloads.
+  - name: rules
+    description: Regex rules applied by the session editor's transform.
+  - name: settings
+    description: App settings and per-channel Session defaults.
+  - name: slack
+    description: Stateless allowlisted Slack Web API proxy.
+  - name: media
+    description: Slack-image mirroring into the media library.
+  - name: migration
+    description: One-shot import of the retired Node app's export payload.
+  - name: sheets
+    description: Character sheets — public sheet reads, live property updates, and template tooling.
+
+paths:
+  /slack/{method}:
+    post:
+      tags: [slack]
+      operationId: slackProxy
+      summary: Proxy one allowlisted Slack Web API call
+      description: |
+        Forwards the JSON body to the named Slack Web API method using the
+        site's stored bot token and returns Slack's JSON verbatim. The
+        method must be on the server's exact allowlist (conversations.list,
+        conversations.history, conversations.replies, users.info,
+        emoji.list, auth.test); anything else is 400. Slack 429s pass
+        through with `retry_after` seconds at the top level of the body.
+      parameters:
+        - name: method
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z]+(\.[a-z]+)+$'
+      requestBody:
+        description: Arguments for the Slack method, validated server-side per method.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Slack's JSON response, verbatim.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlackResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The site has no Slack bot token configured (`chronicler_no_token`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Slack rate limit, passed through. Top-level `retry_after` is seconds to wait.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateLimited"
+        "502":
+          description: Slack returned an error or was unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List sessions (light shape, no message payloads)
+      responses:
+        "200":
+          description: Sessions ordered by last update, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionLight"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Create a session
+      description: |
+        A minimal `{integration, channel, start, end}` body creates a draft;
+        `rule_ids`, `editorState`, and `messages` are optional. A headless
+        client can author a complete Session in one POST by including the
+        transformed `messages` payload. For an open-ended session (e.g. a
+        clipping bot that knows the start before the end), create with
+        `end` equal to `start` and PUT the real end later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionCreate"
+      responses:
+        "201":
+          description: The stored Session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionFull"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Fetch one session, message payload included
+      responses:
+        "200":
+          description: The full Session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionFull"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [sessions]
+      operationId: updateSession
+      summary: Partially update a session
+      description: Absent fields are untouched; `messages` is replaced wholesale when present.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionUpdate"
+      responses:
+        "200":
+          description: The updated Session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionFull"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [sessions]
+      operationId: deleteSession
+      summary: Delete a session
+      responses:
+        "200":
+          description: Deletion acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deleted"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /rules:
+    get:
+      tags: [rules]
+      operationId: listRules
+      summary: List rules (published only, oldest first)
+      responses:
+        "200":
+          description: Every published rule.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [rules]
+      operationId: createRule
+      summary: Create a rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleCreate"
+      responses:
+        "201":
+          description: The stored rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [rules]
+      operationId: getRule
+      summary: Fetch one rule
+      responses:
+        "200":
+          description: The rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [rules]
+      operationId: updateRule
+      summary: Partially update a rule
+      description: Absent fields are untouched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleUpdate"
+      responses:
+        "200":
+          description: The updated rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [rules]
+      operationId: deleteRule
+      summary: Delete a rule
+      description: Detaches nothing — sessions keep the id in `rule_ids`; unknown ids are ignored at render time.
+      responses:
+        "200":
+          description: Deletion acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deleted"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /image:
+    get:
+      tags: [media]
+      operationId: image
+      summary: Mirror a Slack-hosted image and redirect to the local copy
+      description: |
+        Mirrors the Slack image into the media library on first fetch and
+        302-redirects to the local attachment URL (the default, for `<img>`
+        consumers). `format=json` answers 200 with the attachment `{id,
+        url}` instead — for callers that need the attachment id.
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: alt
+          in: query
+          schema:
+            type: string
+            default: ""
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [redirect, json]
+            default: redirect
+      responses:
+        "200":
+          description: The mirrored attachment (format=json only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageAttachment"
+        "302":
+          description: Redirect to the local attachment URL (default).
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: The download from Slack failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /settings:
+    get:
+      tags: [settings]
+      operationId: getSettings
+      summary: Fetch app settings and per-channel Session defaults
+      responses:
+        "200":
+          description: The whole settings document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsDocument"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [settings]
+      operationId: putSettings
+      summary: Merge settings and channel defaults
+      description: |
+        Merge semantics: `settings` patches per key; `channelDefaults`
+        patches per channel id — an object replaces that channel's entry,
+        `null` deletes it, absent keys are kept.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsPut"
+      responses:
+        "200":
+          description: The settings document after the merge.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /import:
+    post:
+      tags: [migration]
+      operationId: import
+      summary: Import the retired Node app's export payload (idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportPayload"
+      responses:
+        "200":
+          description: What the import created or updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /characters/{id}/sheet:
+    get:
+      tags: [sheets]
+      operationId: getSheet
+      summary: Fetch one character's sheet (public read)
+      description: |
+        The character's sheet: template properties with current values and
+        display strings, plus the layout to render them with. This is the
+        namespace's one public route — no credentials required — backing
+        the front-end sheet render. Credentials still matter: GM-only
+        properties (and any section they empty) are omitted unless the
+        caller holds `edit_others_chr_characters`, owner-only properties
+        are omitted unless the caller can `edit_post` this character (its
+        author or a GM), and `canEdit` reflects the caller's `edit_post`
+        right on the character.
+      security:
+        - {}
+        - basicAuth: []
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: The sheet, gated to what the caller may see.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sheet"
+        "404":
+          description: |
+            No such character, no sheet template configured, or the
+            character is not visible to the caller (`chronicler_not_found`
+            / `chronicler_no_template`) — a sheet the caller may not see
+            answers exactly like a missing one, so its existence stays
+            hidden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /characters/{id}/properties/{prop}:
+    post:
+      tags: [sheets]
+      operationId: updateSheetProperty
+      summary: Apply one write operation to a live sheet property
+      description: |
+        Applies `{op, value}` to one property and stores the result.
+        Requires the WordPress `edit_post` capability on the character —
+        the owning player or a GM. Only `live` properties accept writes;
+        GM-only properties additionally require
+        `edit_others_chr_characters`. The response echoes the stored value
+        plus every formula-derived value recomputed fresh, for the play
+        surfaces to reconcile.
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: prop
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SheetPropertyWrite"
+      responses:
+        "200":
+          description: The stored value and the recomputed derived values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SheetPropertyResult"
+        "400":
+          description: Body missing `op` (`chronicler_bad_request`), or a value the property refuses (`chronicler_bad_value`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            Authenticated but cannot edit this character
+            (`rest_forbidden`), or the property refuses writes: GM-only
+            without the GM capability (`chronicler_forbidden`),
+            formula-computed (`chronicler_derived`), or not live
+            (`chronicler_not_live`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: |
+            No such character, no sheet template configured, or the sheet
+            has no such property (`chronicler_not_found` /
+            `chronicler_no_template` / `chronicler_no_property`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /characters/names:
+    get:
+      tags: [sheets]
+      operationId: characterNames
+      summary: Map Slack member ids to character log names
+      description: |
+        Every WordPress account carrying a `chronicler_slack_user_id` whose
+        player resolves to a character contributes one entry: Slack member
+        id to the character's log name (goes-by, else title). Requires
+        `edit_others_chr_characters` — session editors (the GM) only.
+      responses:
+        "200":
+          description: The Slack-id to character-name map (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterNames"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: Authenticated but missing `edit_others_chr_characters` (`rest_forbidden`, status 403).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /template/preflight:
+    post:
+      tags: [sheets]
+      operationId: templatePreflight
+      summary: Validate an unsaved sheet template
+      description: |
+        Runs the exact save-time parse — formula syntax, cycles, and
+        relational rules included — over an unsaved template source (JSON
+        or YAML), so the Game System editor validates while typing.
+        Read-only: nothing is stored. Requires `manage_options`, the same
+        gate as saving the template. Validation problems are reported in
+        the 200 verdict, not as an error status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplatePreflight"
+      responses:
+        "200":
+          description: The verdict — valid with the system name, or invalid with the parse error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplatePreflightVerdict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: Authenticated but missing `manage_options` (`rest_forbidden`, status 403).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        WordPress Application Password (HTTP Basic). Core routes require the
+        operation's tier (`chronicler_compose`, `chronicler_manage`, or
+        `chronicler_slack_read`, summarized above); the sheets routes name
+        their own capability on each operation.
+
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: Validation failed (`rest_invalid_param` and friends).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthenticated:
+      description: No (or invalid) credentials (`rest_forbidden`, status 401).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but missing the route's required capability (`rest_forbidden`, status 403).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such resource (`chronicler_not_found`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      description: WordPress error envelope. HTTP status rides in `data.status`. (The Slack proxy's 429 body is the one departure — see `RateLimited`.)
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+
+    RateLimited:
+      type: object
+      description: |
+        The Slack proxy's 429 body. Unlike the `Error` envelope there is no
+        `data` member: `retry_after` (seconds to wait before retrying) sits
+        at the TOP level of the body, exactly as the plugin builds it and
+        the wp-admin client reads it.
+      properties:
+        code:
+          type: string
+        retry_after:
+          type: integer
+      additionalProperties: false
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+      required: [id]
+      additionalProperties: false
+
+    UserOverrides:
+      type: object
+      description: Per-user display overrides, keyed by Slack user id.
+      additionalProperties:
+        type: object
+        properties:
+          name:
+            type: string
+          color:
+            type: string
+        additionalProperties: false
+
+    EditorState:
+      type: object
+      description: Client-owned editor state, round-tripped opaquely; documented fields are what the session editor uses today.
+      properties:
+        userOverrides:
+          $ref: "#/components/schemas/UserOverrides"
+        scheme:
+          type: string
+          enum: [light, dark, custom-light, custom-dark]
+        customCss:
+          type: string
+      additionalProperties: true
+
+    MessageItem:
+      type: object
+      description: One transformed message in the chronicler/message block-attribute vocabulary. Stored verbatim; transcript generation maps it 1:1 onto block grammar.
+      properties:
+        html:
+          type: string
+        rootClass:
+          type: string
+        anchorId:
+          type: string
+        authorName:
+          type: string
+        authorColor:
+          type: string
+        authorColorDark:
+          type: string
+        avatarHtml:
+          type: string
+        headHtml:
+          type: string
+        bodyHtml:
+          type: string
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              src:
+                type: string
+              alt:
+                type: string
+              caption:
+                type: string
+            additionalProperties: false
+        extrasHtml:
+          type: string
+        reactionsHtml:
+          type: string
+        className:
+          type: string
+        variants:
+          type: array
+          items:
+            type: string
+        realName:
+          type: string
+      additionalProperties: false
+
+    SessionLight:
+      type: object
+      description: The list shape — no message payload.
+      properties:
+        id:
+          type: integer
+        integration:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        start:
+          type: string
+        end:
+          type: string
+        rule_ids:
+          type: array
+          items:
+            type: integer
+        messageCount:
+          type: integer
+        created:
+          type: string
+        updated:
+          type: string
+      additionalProperties: false
+
+    SessionFull:
+      allOf:
+        - $ref: "#/components/schemas/SessionLight"
+        - type: object
+          properties:
+            editorState:
+              $ref: "#/components/schemas/EditorState"
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/MessageItem"
+
+    SessionCreate:
+      type: object
+      properties:
+        integration:
+          type: string
+          enum: [slack]
+        channel:
+          $ref: "#/components/schemas/Channel"
+        start:
+          type: string
+          minLength: 1
+        end:
+          type: string
+          minLength: 1
+        rule_ids:
+          type: array
+          items:
+            type: integer
+          default: []
+        editorState:
+          $ref: "#/components/schemas/EditorState"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageItem"
+      required: [integration, channel, start, end]
+
+    SessionUpdate:
+      type: object
+      description: Any subset of the mutable fields; absent fields are kept.
+      properties:
+        channel:
+          $ref: "#/components/schemas/Channel"
+        start:
+          type: string
+          minLength: 1
+        end:
+          type: string
+          minLength: 1
+        rule_ids:
+          type: array
+          items:
+            type: integer
+        editorState:
+          $ref: "#/components/schemas/EditorState"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageItem"
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: integer
+        pattern:
+          type: string
+          minLength: 1
+        flags:
+          type: string
+        mode:
+          type: string
+          enum: [start, end, hide, addclass, wp-tag]
+        className:
+          type: string
+        tagNames:
+          type: string
+        description:
+          type: string
+      additionalProperties: false
+
+    RuleCreate:
+      type: object
+      properties:
+        pattern:
+          type: string
+          minLength: 1
+        flags:
+          type: string
+          default: i
+        mode:
+          type: string
+          enum: [start, end, hide, addclass, wp-tag]
+        className:
+          type: string
+          default: ""
+        tagNames:
+          type: string
+          default: ""
+        description:
+          type: string
+          default: ""
+      required: [pattern, mode]
+
+    RuleUpdate:
+      type: object
+      description: Any subset of the rule fields; absent fields are kept.
+      properties:
+        pattern:
+          type: string
+          minLength: 1
+        flags:
+          type: string
+        mode:
+          type: string
+          enum: [start, end, hide, addclass, wp-tag]
+        className:
+          type: string
+        tagNames:
+          type: string
+        description:
+          type: string
+
+    Deleted:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: integer
+      additionalProperties: false
+
+    ChannelDefault:
+      type: object
+      description: One channel's defaults, applied client-side when creating a Session for that channel. `null` in a PUT patch removes the entry.
+      properties:
+        userOverrides:
+          $ref: "#/components/schemas/UserOverrides"
+        scheme:
+          type: string
+          enum: [light, dark, custom-light, custom-dark]
+        customCss:
+          type: string
+        controls:
+          type: object
+        rule_ids:
+          type: array
+          items:
+            type: integer
+      additionalProperties: false
+
+    SettingsDocument:
+      type: object
+      properties:
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+        channelDefaults:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ChannelDefault"
+      additionalProperties: false
+
+    SettingsPut:
+      type: object
+      properties:
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+        channelDefaults:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: "#/components/schemas/ChannelDefault"
+              - type: "null"
+
+    ImageAttachment:
+      type: object
+      properties:
+        id:
+          type: integer
+        url:
+          type: string
+      additionalProperties: false
+
+    SlackResponse:
+      type: object
+      description: Slack's JSON body, verbatim.
+      additionalProperties: true
+
+    ImportPayload:
+      type: object
+      properties:
+        presets:
+          type: object
+          additionalProperties:
+            type: object
+          default: {}
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+        libraryRules:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                minLength: 1
+              pattern:
+                type: string
+              flags:
+                type: string
+              mode:
+                type: string
+              className:
+                type: string
+              tagNames:
+                type: string
+            required: [id]
+          default: []
+
+    ImportResult:
+      type: object
+      properties:
+        rules:
+          type: object
+          properties:
+            created:
+              type: integer
+            updated:
+              type: integer
+          additionalProperties: false
+        channelDefaults:
+          type: integer
+        settings:
+          type: integer
+      additionalProperties: false
+
+    SheetProperty:
+      type: object
+      description: |
+        One template property, verbatim from the parsed Game System
+        template (`id`, `label`, `type`, plus whatever the type declares —
+        `min`/`max`, `length`, `options`, `fields`, `derived`, `live`,
+        `gm_only`, `owner_only`, ...), with the character's current `value`
+        and its human-readable `display` string merged in. Audience-gated
+        properties never reach callers outside the audience: `gm_only` is
+        serialized for game masters only, `owner_only` only for the
+        character's author and game masters.
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+          enum: [number, track, counter, toggle, select, checklist, text, longtext, list]
+        value:
+          description: The current value; its JSON type depends on `type`.
+        display:
+          type: string
+      additionalProperties: true
+
+    LayoutSection:
+      type: object
+      description: One layout section; `properties` lists property ids in render order. A masthead section renders inside the header card.
+      properties:
+        section:
+          type: string
+        properties:
+          type: array
+          items:
+            type: string
+        masthead:
+          type: boolean
+      additionalProperties: false
+
+    Sheet:
+      type: object
+      description: A character's sheet, gated to the caller — audience-gated properties (GM-only, owner-only) and any section they leave empty are omitted for callers outside the audience.
+      properties:
+        characterId:
+          type: integer
+        title:
+          type: string
+        canEdit:
+          type: boolean
+          description: Whether the caller may edit this character.
+        system:
+          type: string
+          description: The game system's name, from the template.
+        layout:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayoutSection"
+        properties:
+          type: array
+          items:
+            $ref: "#/components/schemas/SheetProperty"
+      additionalProperties: false
+
+    SheetPropertyWrite:
+      type: object
+      description: |
+        One write operation. `set` replaces the value, `adjust` adds a
+        signed whole number to a numeric value, `toggle` flips a toggle
+        (no `value` needed) or one checklist option. What `value` must be
+        depends on the property's type — a whole number for
+        number/track/counter (clamped to the property's bounds), on/off
+        for a toggle, an option id for select (or to toggle one checklist
+        entry), a list of option ids for checklist, a list of entry
+        objects for list.
+      properties:
+        op:
+          type: string
+          enum: [set, adjust, toggle]
+        value:
+          description: The operand; its JSON type depends on the property and op.
+      required: [op]
+
+    SheetPropertyResult:
+      type: object
+      description: The stored result, plus every formula-derived value recomputed fresh — any of them may depend on what just changed.
+      properties:
+        prop:
+          type: string
+        value:
+          description: The stored value after the op.
+        display:
+          type: string
+        derived:
+          type: array
+          items:
+            $ref: "#/components/schemas/DerivedValue"
+      additionalProperties: false
+
+    DerivedValue:
+      type: object
+      description: One formula-computed property, recomputed on read.
+      properties:
+        prop:
+          type: string
+        label:
+          type: string
+        value:
+          description: A number for number properties, a boolean for toggles.
+        display:
+          type: string
+      additionalProperties: false
+
+    CharacterNames:
+      type: object
+      description: Slack member id to the mapped player's character log name (goes-by, else title). Empty when no account maps to a character.
+      additionalProperties:
+        type: string
+
+    TemplatePreflight:
+      type: object
+      properties:
+        source:
+          type: string
+          description: The template source, JSON or YAML.
+          minLength: 1
+      required: [source]
+
+    TemplatePreflightVerdict:
+      type: object
+      description: |
+        The save-time parse verdict. `valid: true` carries the parsed
+        `system` name; `valid: false` carries the parse error's `code` and
+        `message` (an empty source is `chronicler_empty`).
+      properties:
+        valid:
+          type: boolean
+        system:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+      additionalProperties: false

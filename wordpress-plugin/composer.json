@@ -1,0 +1,26 @@
+{
+    "name": "chronicler/chronicler",
+    "description": "Chronicles Slack RPG sessions as WordPress transcripts and character sheets.",
+    "type": "wordpress-plugin",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "symfony/expression-language": "^7.4",
+        "symfony/yaml": "^7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Chronicler\\": "src/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.2"
+        },
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "require-dev": {
+        "opis/json-schema": "^2.6"
+    }
+}

@@ -1,0 +1,19 @@
+# Plugin versioning
+
+The `Version:` header in `wordpress-plugin/chronicler.php` is the repo's ONLY version literal. WordPress mandates that header as committed text (wp-admin parses the file, and wp-env mounts the source tree directly, so it can't be build-stamped) — so it is canonical and everything else derives from it:
+
+- `CHRONICLER_VERSION` is defined at runtime from the header via `get_file_data()` — never edit it separately.
+- `composer.json` carries no `version` field (per Composer's own recommendation); build/test scripts inject `COMPOSER_ROOT_VERSION` from the header (`scripts/pluginVersion.mjs`) so Composer doesn't warn and default to 1.0.0 inside the git-less container mount.
+- `package.json` has no `version` field either (allowed for private packages; nothing reads it).
+
+Any change under `wordpress-plugin/` MUST bump the version: `npm run bump patch` (fix) or `npm run bump minor` (feature) rewrites the header; rebuild the zip with `npm run build:plugin` afterward. One bump per branch is enough: the guard compares against the merge-base with `main`.
+
+This is enforced (#77): a pre-commit hook (`.githooks/`, activated by `npm install` via the `prepare` script) rejects commits that stage plugin changes without a bump, and `npm run check:version` runs the same check against committed state. The pre-commit hook also runs `npm run lint` when staged files include JS/TS, and a pre-push hook runs `npm test` plus `npm run test:php`. Steps that need a provisioned checkout degrade gracefully: lint and `npm test` skip with a warning when `node_modules` is absent (a fresh worktree), and `test:php` skips when Docker is down — only the node-only version guard is unconditional. `git commit --no-verify` bypasses a false positive. `core.hooksPath` is repo-shared and relative and `.githooks/` is tracked, so the hooks DO fire in linked worktrees — but because lint/tests self-skip without `node_modules`, still include the version-bump rule in every subagent brief; the guard alone runs there, and it can be bypassed.
+
+# PHP dependencies
+
+Plugin PHP classes live under `wordpress-plugin/src/` in the `Chronicler\` PSR-4 namespace, autoloaded via Composer (`wordpress-plugin/composer.json`). To add a dependency, run `composer require <pkg>` inside `wordpress-plugin/` (or edit composer.json) and commit `composer.json` + `composer.lock` — that's a plugin change, so the version-bump rule above applies. `vendor/` is build-time only: gitignored, never committed. `npm run build:plugin` runs `composer install --no-dev --optimize-autoloader` (local composer, or the composer:2 Docker image) and bundles `vendor/` into the zip, because the zip must activate on a shared host with no Composer. `chronicler.php` only requires `vendor/autoload.php` when it exists. The plugin has REAL runtime dependencies since 4.6.0 (symfony/expression-language powers #88 derived formulas), so a dev checkout needs `vendor/` present: `npm run test:php` auto-provisions it through the composer Docker image on first run, and a wp-env mount picks up the same directory. A plain checkout still never needs a local Composer install.
+
+# Admin bundle
+
+The wp-admin session editor's source lives in `components/admin/` (React) plus the shared transform layer in `lib/transform/`. `npm run build:admin` bundles it with esbuild into `wordpress-plugin/admin/dist/` (gitignored — a fresh checkout has no bundle until you build). `npm run build:plugin` runs it automatically, so built zips always ship a fresh bundle. The build asserts two invariants and fails on either: no `next/*` or `app/` module may appear in the JS module graph, and every CSS selector must be scoped under `#chronicler-admin-root` so nothing bleeds into wp-admin chrome.

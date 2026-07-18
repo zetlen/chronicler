@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "chronicler/session-placeholder",
+  "title": "Chronicler session",
+  "category": "text",
+  "icon": "book-alt",
+  "description": "Pick a saved session and generate its transcript here. Readers never see the placeholder.",
+  "keywords": ["chronicler", "session", "transcript", "slack"],
+  "textdomain": "chronicler",
+  "attributes": {
+    "sessionId": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "supports": {
+    "html": false,
+    "customClassName": false
+  },
+  "editorScript": "chronicler-session-placeholder"
+}

@@ -1,0 +1,29 @@
+# Corpus coverage for expression-valued list-field "when" (2026-07-13):
+# a bare toggle id and a compound expression, side by side.
+system: When Expression Demo
+version: 1
+properties:
+  - id: inventory
+    label: Inventory
+    type: list
+    entry_label: Item
+    fields:
+      - id: name
+        label: Name
+        type: text
+      - id: is_weapon
+        label: Weapon?
+        type: toggle
+      - id: harm_rating
+        label: Harm
+        type: number
+        min: 0
+        max: 5
+        when: is_weapon
+      - id: notes
+        label: Notes
+        type: text
+        when: is_weapon and harm_rating >= 3
+layout:
+  - section: Gear
+    properties: [inventory]

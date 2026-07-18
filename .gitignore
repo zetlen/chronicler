@@ -1,0 +1,43 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+
+# testing
+/coverage
+
+# playwright mcp scratch output
+/.playwright-mcp/
+
+# agent worktrees (session-local checkouts; .claude/skills stays tracked)
+/.claude/worktrees/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+
+# env files — local secrets/config (deploy target, dev Slack fixture).
+# .env.example is the committed, value-free template; keep it tracked.
+.env*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+
+# built by scripts/build-plugin-zip.mjs
+chronicler.zip
+
+# PHP deps vendored into the plugin zip by scripts/build-plugin-zip.mjs
+/wordpress-plugin/vendor/
+
+# wp-admin session-editor bundle, built by scripts/build-admin-bundle.mjs
+/wordpress-plugin/admin/dist/
+
+# Dead Node-app leftovers / local data (pre-4.0 era; safe to delete)
+.next/
+.chronicler-cache/
+.chronicler-data/
+next-env.d.ts

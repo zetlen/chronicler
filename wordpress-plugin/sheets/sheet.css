@@ -1,0 +1,464 @@
+/* Character sheet. Neutral by default; themable via custom properties. */
+.chr-sheet {
+  --chr-accent: #997500;
+  --chr-border: #d0c8b8;
+  /* Marked track pips and checked toggles: louder than the page accent. */
+  --chr-mark: #e05d00;
+  display: grid;
+  gap: 1.5rem;
+  /* Fallback for the alignwide class on the article: block themes constrain
+     content-width children via zero-specificity :where() rules, so this
+     wins and grants the theme's wide measure to the whole sheet. */
+  max-width: var(--wp--style--global--wide-size, 72rem);
+  margin-inline: auto;
+  /* Inherited safety net: a long unbroken value (name, tag, gear line) breaks
+     rather than pushing the sheet past the viewport edge. */
+  overflow-wrap: anywhere;
+}
+.chr-masthead {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--chr-border);
+  border-top: 4px solid var(--chr-accent);
+  border-radius: 4px;
+  background: rgba(153, 117, 0, 0.05);
+}
+
+.chr-masthead__player {
+  position: absolute;
+  top: 0.85rem;
+  right: 1.25rem;
+  font-size: 0.85rem;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.chr-masthead__portrait {
+  flex: 0 0 auto;
+}
+
+.chr-masthead__portrait img {
+  display: block;
+  width: 220px;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.chr-masthead__name {
+  margin: 0;
+  font-size: 2.1rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+@media (max-width: 560px) {
+  .chr-masthead {
+    flex-direction: column;
+  }
+  .chr-masthead__portrait img {
+    width: 100%;
+    height: auto;
+  }
+  /* The "Played by" badge is right-anchored absolute at wide widths; at narrow
+     widths a long player name would overlap the character title (#83). Drop it
+     into the flow at the end of the column instead — order:99 places it under
+     the name/traits without moving it in the DOM (so wide widths are
+     unchanged). */
+  .chr-masthead__player {
+    position: static;
+    order: 99;
+    margin-top: 0.5rem;
+  }
+}
+
+.chr-masthead__tagline {
+  margin: 0.3rem 0 0;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.chr-masthead__traits {
+  margin-top: 0.8rem;
+}
+
+.chr-masthead__trait {
+  font-size: 0.95rem;
+  font-style: italic;
+}
+/* Spacing lives in its own rule, scoped through the parent (rather than the
+   bare class above) so it reliably beats a theme's own paragraph typography
+   — .chr-masthead__trait is a <p>, and a theme rule no more specific than
+   element+class (e.g. ".entry-content p") can otherwise win the cascade and
+   reinstate the theme's default paragraph spacing between these identity
+   rows. Line-height is set explicitly for the same reason: an inherited
+   body value is often generous enough on its own to read as "gaps" even
+   with tight margins. Kept separate from the rule above (rather than
+   folded in) so this doesn't out-specificity --primary's own font styling
+   below. */
+.chr-masthead__traits .chr-masthead__trait {
+  margin: 0.1rem 0;
+  line-height: 1.3;
+}
+
+.chr-masthead__trait--primary {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.chr-masthead__trait-label {
+  margin-right: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  opacity: 0.7;
+}
+
+/* The unstructured rich block between the header card and the stat block. */
+.chr-sheet__intro {
+  font-size: 0.95rem;
+  opacity: 0.85;
+}
+
+.chr-sheet__intro p {
+  margin: 0.3rem 0;
+}
+
+.chr-section > h2 {
+  border-bottom: 2px solid var(--chr-accent);
+  margin-bottom: 0.5rem;
+}
+/* .chr-sheet is a grid, so each section is a grid item; a grid item's
+   default min-width is auto (its content's min-content size), which lets a
+   section refuse to shrink below that and overflow the sheet's own column —
+   the cause of issue #64's clipped stat grid and trackers, including when
+   site CSS turns a section into its own flex layout (e.g. the named-hook
+   pattern render.php's comment above points at). Same fix site CSS relies
+   on already, in the admin Stat Block meta box (stat-block.css). */
+.chr-section {
+  min-width: 0;
+}
+.chr-prop {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.3rem 0;
+}
+.chr-prop__label {
+  font-weight: 600;
+  min-width: 7rem;
+}
+.chr-prop__display {
+  margin-left: auto;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+/* What a property does (e.g. the moves a rating rolls) — quiet, inline. */
+.chr-prop__detail {
+  font-size: 0.85rem;
+  font-style: italic;
+  opacity: 0.7;
+}
+.chr-prop__detail-item:not(:last-child)::after {
+  content: " · ";
+}
+.chr-prop__detail + .chr-prop__display {
+  margin-left: auto;
+}
+.chr-track {
+  display: inline-flex;
+  gap: 0.45rem;
+}
+.chr-track__box {
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 2px solid var(--chr-border);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.chr-track__box[aria-pressed="true"] {
+  background: var(--chr-mark);
+  border-color: var(--chr-mark);
+}
+.chr-toggle {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--chr-mark);
+}
+.chr-step {
+  width: 1.8rem;
+  height: 1.8rem;
+  cursor: pointer;
+}
+.chr-prop__value {
+  min-width: 2ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.chr-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-basis: 100%;
+}
+.chr-text,
+.chr-longtext {
+  flex: 1;
+  min-width: 12rem;
+}
+/* The native rows="4" default reads as cramped for anything but a one-line
+   note (Player Notes, GM Notes) — give it real room to write in. */
+.chr-longtext {
+  min-height: 12rem;
+}
+.chr-sheet__error {
+  background: #fbeaea;
+  color: #8a1f1f;
+  border-left: 4px solid #c00;
+  padding: 0.5rem 1rem;
+}
+.chr-sheet button:disabled,
+.chr-sheet input:disabled,
+.chr-sheet select:disabled,
+.chr-sheet textarea:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+/* Same shrink-to-fit fix as .chr-section, one level down: .chr-prop__static
+   is a flex item of .chr-prop, and without this a wide static value (the
+   gear list's table, a long track) refuses to shrink and overflows. */
+.chr-prop__static {
+  min-width: 0;
+}
+.chr-prop__static .chr-track__box {
+  display: inline-block;
+  cursor: default;
+}
+.chr-prop__static .chr-track__box + .chr-track__box {
+  margin-left: 0.45rem;
+}
+.chr-prop__static .chr-track__box[data-marked="1"] {
+  background: var(--chr-mark);
+  border-color: var(--chr-mark);
+}
+/* Bio/notes images: authored inline in a longtext property's rich content
+   (issue #68). The wp-admin "Insert Image" button (bio-image.js) drops a
+   bare <img> with no width/height/style — sizing is controlled entirely
+   here, not per image — and this same rule also catches any pre-existing
+   image that still carries an inline width from before, so a wide one can't
+   reintroduce the horizontal overflow issue #64 fixed. max-width only
+   clamps values bigger than the column; a smaller inline width still
+   renders unchanged. */
+.chr-prop[data-type="longtext"] img {
+  max-width: 100%;
+  height: auto;
+}
+.chr-checklist li[data-checked="0"] {
+  opacity: 0.55;
+}
+.chr-list {
+  border-collapse: collapse;
+  width: 100%;
+}
+.chr-list th,
+.chr-list td {
+  border-bottom: 1px solid var(--chr-border);
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+/* A list's "have/possess this" toggle field is conventionally named "has"
+   (Moves and Improvements both use it for their "Has it" column) — every
+   toggle field stamps this state on its row (render.php), so fading the
+   ones the character lacks is the same treatment as the checklist opacity
+   rule above, generalized to any list that follows the convention. */
+.chr-list tr[data-has="0"] {
+  opacity: 0.55;
+}
+/* Improvements: row-header names read as loud when every one of a long
+   list is bold by the browser's default <th> styling. */
+.chr-prop--improvements .chr-list th[scope="row"] {
+  font-weight: 400;
+}
+/* Improvements' two toggle columns ("has" / "advanced") render an
+   identical check mark today, with no way to tell which state a mark in a
+   given row belongs to. Color the "have" mark (matching the sheet's mark
+   color elsewhere) and box the "advanced" mark, so the two read apart at a
+   glance without needing the column header (screen-reader-only) to know
+   which is which. Keyed on the field id (data-field, from render.php) —
+   not the display label, which wp-admin can reword at any time. */
+.chr-prop--improvements .chr-list td[data-field="has"]:not(:empty) {
+  color: var(--chr-mark);
+  font-weight: 700;
+}
+.chr-prop--improvements .chr-list td[data-field="advanced"]:not(:empty) {
+  color: var(--chr-mark);
+  font-weight: 700;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 2px var(--chr-mark);
+}
+/* Toggle-column headers are screen-reader-only; hide them even on themes
+   without WP's standard utility class. */
+.chr-list .screen-reader-text {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* A multi-column list table (e.g. Gear's Name/Effect/Harm/Tags) has no room
+   to stay tabular at phone widths — table-layout:auto's minimum content
+   width wins over any container fix above and clips columns off-screen
+   (issue #64). Stack each row instead: the row header (entry name) stays
+   the prominent line, and every other cell prints its own field's label
+   (from the data-label attribute render.php adds) beside its value, so the
+   Effect column survives as an inline label rather than being dropped. */
+@media (max-width: 560px) {
+  .chr-list,
+  .chr-list thead,
+  .chr-list tbody,
+  .chr-list tr,
+  .chr-list th,
+  .chr-list td {
+    display: block;
+  }
+  .chr-list thead {
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+  .chr-list tr {
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--chr-border);
+  }
+  .chr-list th,
+  .chr-list td {
+    border-bottom: 0;
+    padding: 0.15rem 0;
+  }
+  /* Gated-off and unfilled fields already render as an empty cell; drop that
+     one stacked line rather than showing a bare label. */
+  .chr-list td:empty {
+    display: none;
+  }
+  .chr-list td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: 600;
+    opacity: 0.7;
+  }
+}
+
+/* Classic themes render their own post header (title, byline, featured
+   image) from single.php — the masthead already owns all of it. Block
+   themes never reach this: the plugin's template has no post header. */
+.single-chr_character .entry-header {
+  display: none;
+}
+
+/* --- Character index (#66) ------------------------------------------------ */
+
+.chr-index {
+  --chr-accent: #997500;
+  --chr-border: #d0c8b8;
+  max-width: var(--wp--style--global--wide-size, 72rem);
+  margin-inline: auto;
+}
+.chr-index__group + .chr-index__group {
+  margin-top: 3rem;
+}
+.chr-index__heading {
+  margin: 0 0 1rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 3px solid var(--chr-accent);
+}
+.chr-index__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 1.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.chr-index__card {
+  margin: 0;
+}
+.chr-index__link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  height: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--chr-border);
+  border-radius: 4px;
+  /* The tile plate. Derived from the theme's own text colour (not a fixed
+     tint) so it stays a visible backing on light AND dark palettes — the
+     fixed gold tints below vanished on the dark blog (the #83 dark-safe
+     lesson the later index missed). */
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.chr-index__link:hover,
+.chr-index__link:focus-visible {
+  border-color: var(--chr-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.chr-index__portrait {
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 3px;
+  /* Adaptive plate behind the empty-state initial, for the same reason as
+     the tile above — the old fixed gold tint disappeared on dark themes. */
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.chr-index__portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  display: block;
+}
+.chr-index__portrait--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  font-weight: 700;
+  /* Inherit the theme's text colour (muted via opacity) rather than the
+     fixed gold accent, which read as near-black on the dark palette. This
+     is the same opacity-on-inherit rule the rest of the sheet's muted text
+     follows. */
+  opacity: 0.5;
+}
+.chr-index__name {
+  font-weight: 600;
+  line-height: 1.25;
+}
+.chr-index__tagline {
+  font-size: 0.85em;
+  opacity: 0.75;
+  line-height: 1.35;
+}
+
+/* The classic-theme template's own frame (archive-template.php). */
+.chr-index-main {
+  max-width: var(--wp--style--global--wide-size, 72rem);
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}

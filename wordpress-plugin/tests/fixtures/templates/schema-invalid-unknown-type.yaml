@@ -1,0 +1,6 @@
+system: Bad Type
+version: 1
+properties:
+  - id: cool
+    label: Cool
+    type: slider

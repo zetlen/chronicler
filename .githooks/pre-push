@@ -1,0 +1,16 @@
+#!/bin/sh
+# Test gate before anything leaves the machine: vitest (incl. the
+# cross-language parity fixtures) and the plugin's PHP harness. Each step is
+# skipped with a warning when its prerequisite is missing — no node_modules
+# (a fresh worktree) or no Docker daemon — so pushes don't hard-depend on a
+# fully provisioned checkout. Bypass with `git push --no-verify`.
+if [ -d node_modules ]; then
+  npm test || exit 1
+else
+  echo "⚠ pre-push: no node_modules — skipping npm test (run npm install to enable)" >&2
+fi
+if docker info >/dev/null 2>&1; then
+  npm run test:php || exit 1
+else
+  echo "⚠ pre-push: Docker isn't running — skipping npm run test:php" >&2
+fi
