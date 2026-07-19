@@ -85,7 +85,9 @@ properties:
 
   # A repeatable list; each entry gets these fields. "when" gates a field
   # behind an expression over the entry's other fields — a bare toggle id
-  # is the common case.
+  # is the common case. Playtest-honed conventions (#181): call the free-text
+  # field "Description" (not "Effect"), and give EVERY entry a tags field —
+  # only truly weapon-specific fields (like Harm) belong behind the toggle.
   - id: gear
     label: Gear
     type: list
@@ -93,6 +95,12 @@ properties:
     fields:
       - id: name
         label: Name
+        type: text
+      - id: description
+        label: Description
+        type: longtext
+      - id: tags
+        label: Tags
         type: text
       - id: is_weapon
         label: Weapon?

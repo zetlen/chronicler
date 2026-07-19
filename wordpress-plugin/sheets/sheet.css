@@ -328,13 +328,13 @@
   overflow: hidden;
 }
 
-/* A multi-column list table (e.g. Gear's Name/Effect/Harm/Tags) has no room
-   to stay tabular at phone widths — table-layout:auto's minimum content
+/* A multi-column list table (e.g. Gear's Name/Description/Harm/Tags) has no
+   room to stay tabular at phone widths — table-layout:auto's minimum content
    width wins over any container fix above and clips columns off-screen
    (issue #64). Stack each row instead: the row header (entry name) stays
    the prominent line, and every other cell prints its own field's label
    (from the data-label attribute render.php adds) beside its value, so the
-   Effect column survives as an inline label rather than being dropped. */
+   Description column survives as an inline label rather than being dropped. */
 @media (max-width: 560px) {
   .chr-list,
   .chr-list thead,

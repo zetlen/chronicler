@@ -118,6 +118,9 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #646970;
+  /* Field labels never word-wrap (#181) — a wrapped label reads as two
+     fields in the narrow entry columns. .chr-stat__label already agrees. */
+  white-space: nowrap;
 }
 
 /* Longtext and the entry's display name (first field, by convention) span
