@@ -111,6 +111,9 @@ add_action('init', function () {
                     . 'user-select:none;cursor:pointer;}'
                     . '.slack-log .slk-ooc-toggle input{accent-color:var(--slk-accent);margin:0;cursor:pointer;}'
                     . '.slack-log .slk-ooc-toggle:hover{color:var(--slk-fg);}'
+                    // The "(N hidden)"/"(N shown)" count transcript-core.js
+                    // maintains (#185) — quieter than the label text.
+                    . '.slack-log .slk-ooc-count{opacity:.7;font-variant-numeric:tabular-nums;}'
                     . '@media print{'
                     . '.slack-log .slk-msg--ooc{display:none !important;}'
                     . '.slack-log .slk-ooc-toggle{display:none !important;}'

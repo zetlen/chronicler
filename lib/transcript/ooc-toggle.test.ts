@@ -44,6 +44,44 @@ describe("attachOocToggle", () => {
     expect(root.classList.contains("slk-ooc-shown")).toBe(false);
   });
 
+  it("shows how many messages are hidden, and flips the phrasing on reveal (#185)", () => {
+    const root = transcript();
+    attachOocToggle(root);
+    const badge = root.querySelector(".slk-ooc-count")!;
+    expect(badge.textContent).toBe("(2 hidden)");
+
+    const box = checkbox(root)!;
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(badge.textContent).toBe("(2 shown)");
+
+    box.checked = false;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(badge.textContent).toBe("(2 hidden)");
+  });
+
+  it("uses singular phrasing for one hidden message (#185)", () => {
+    const root = transcript(1);
+    attachOocToggle(root);
+    expect(root.querySelector(".slk-ooc-count")!.textContent).toBe("(1 hidden)");
+    const label = root.querySelector(".slk-ooc-toggle") as HTMLElement;
+    expect(label.title).toContain("1 out-of-character message —");
+  });
+
+  it("explains the OOC jargon in a tooltip (#185)", () => {
+    const root = transcript();
+    attachOocToggle(root);
+    const label = root.querySelector(".slk-ooc-toggle") as HTMLElement;
+    expect(label.title).toContain("out-of-character");
+    expect(label.title).toContain("table talk");
+    expect(label.title).toContain("hides 2");
+
+    const box = checkbox(root)!;
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(label.title).toContain("Showing 2");
+  });
+
   it("renders no control on a transcript without OOC messages", () => {
     const root = transcript(0);
     attachOocToggle(root);

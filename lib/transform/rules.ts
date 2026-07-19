@@ -133,6 +133,117 @@ export function ruleError(
   }
 }
 
+/** True when source[i] is preceded by an odd number of backslashes. */
+function isEscaped(source: string, i: number): boolean {
+  let backslashes = 0;
+  for (let j = i - 1; j >= 0 && source[j] === "\\"; j--) backslashes++;
+  return backslashes % 2 === 1;
+}
+
+/**
+ * Does the pattern assert any position at all — `\b`/`\B`, `^`/`$` outside
+ * character classes, or an explicit lookaround? Any of these means the
+ * author already thought about where the match may sit, so the
+ * bare-substring advisory stays quiet.
+ */
+function hasBoundaryAssertion(source: string): boolean {
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "\\") {
+      const next = source[i + 1];
+      if (!inClass && (next === "b" || next === "B")) return true;
+      i++; // the escaped character is a literal, not syntax
+      continue;
+    }
+    if (inClass) {
+      if (ch === "]") inClass = false;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+      continue;
+    }
+    if (ch === "^" || ch === "$") return true;
+    if (ch === "(" && source[i + 1] === "?") {
+      const next = source[i + 2];
+      if (next === "=" || next === "!") return true;
+      if (next === "<" && (source[i + 3] === "=" || source[i + 3] === "!")) return true;
+    }
+  }
+  return false;
+}
+
+/** Can the pattern's first consumed character be a word character? */
+function leadingEdgeIsWordy(source: string): boolean {
+  let i = 0;
+  // Step inside group openers: "(", "(?:", "(?<name>", "(?i:"… Lookarounds
+  // never reach here — hasBoundaryAssertion() claims those patterns first.
+  while (source[i] === "(") {
+    i++;
+    if (source[i] === "?") {
+      while (i < source.length && source[i] !== ":" && source[i] !== ">") i++;
+      i++;
+    }
+  }
+  const ch = source[i];
+  if (ch === undefined) return false;
+  if (ch === "\\") return source[i + 1] === "w" || source[i + 1] === "d";
+  if (ch === "[") return true; // assume a class can match a word character
+  return /[A-Za-z0-9_]/.test(ch);
+}
+
+/** Can the pattern's last consumed character be a word character? */
+function trailingEdgeIsWordy(source: string): boolean {
+  let i = source.length - 1;
+  while (i >= 0) {
+    const ch = source[i];
+    if (isEscaped(source, i)) {
+      // "\w" and "\d" match word characters; other escapes are literals
+      // or non-word classes.
+      return ch === "w" || ch === "d";
+    }
+    if (ch === ")" || ch === "*" || ch === "+" || ch === "?") {
+      i--; // step out of group closers and quantifiers
+      continue;
+    }
+    if (ch === "}") {
+      const open = source.lastIndexOf("{", i);
+      if (open > 0 && /^\{\d+(,\d*)?\}$/.test(source.slice(open, i + 1))) {
+        i = open - 1; // a {n,m} quantifier; keep stepping
+        continue;
+      }
+      return false; // a literal "}"
+    }
+    if (ch === "]") return true; // assume a class can match a word character
+    return /[A-Za-z0-9_]/.test(ch);
+  }
+  return false;
+}
+
+/**
+ * The non-blocking bare-substring advisory (#185): a pattern whose edge can
+ * be a word character, with no boundary assertions anywhere, also matches
+ * inside longer words — a hand-written "orin" rule famously hit "Dorin".
+ * Returns the warning text, or null when the pattern is empty, does not
+ * compile (the compile error owns that case), asserts any position, or
+ * cannot start/end mid-word. Advisory only: rules that trip it still save
+ * and run.
+ */
+export function ruleBoundaryWarning(
+  rule: Pick<RegexRule, "pattern" | "flags">,
+): string | null {
+  const source = rule.pattern.trim();
+  if (!source) return null;
+  if (ruleError(rule) !== null) return null;
+  if (hasBoundaryAssertion(source)) return null;
+  if (!leadingEdgeIsWordy(source) && !trailingEdgeIsWordy(source)) return null;
+  return (
+    "This pattern also matches inside longer words — e.g. “orin” matches " +
+    "“Dorin”. Add \\b word boundaries (like \\borin\\b) to match whole words only."
+  );
+}
+
 /** Split a comma-separated tag-names field into trimmed, non-empty names. */
 export function tagTokens(tagNames: string | undefined): string[] {
   return (tagNames ?? "")

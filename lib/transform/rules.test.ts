@@ -3,6 +3,7 @@ import type { SlackMessage, ThreadedMessage } from "@/lib/transform/slackTypes";
 import {
   type RegexRule,
   compileRule,
+  ruleBoundaryWarning,
   ruleError,
   classTokens,
   treatmentTokens,
@@ -93,6 +94,63 @@ describe("ruleError", () => {
 
   it("describes an invalid pattern", () => {
     expect(ruleError(rule({ pattern: "(" }))).toMatch(/regular expression/i);
+  });
+});
+
+// --- ruleBoundaryWarning (#185) -------------------------------------------
+
+describe("ruleBoundaryWarning", () => {
+  const warns = (pattern: string) =>
+    ruleBoundaryWarning(rule({ pattern })) !== null;
+
+  it("warns on a bare word substring (the 'orin' in 'Dorin' bug)", () => {
+    expect(ruleBoundaryWarning(rule({ pattern: "orin" }))).toMatch(/\\b/);
+  });
+
+  it("warns when only one edge is a word character", () => {
+    expect(warns("#session-start")).toBe(true); // trailing "t" hits "…started"
+    expect(warns("orin!")).toBe(true); // leading "o" hits "Dorin!"
+  });
+
+  it("warns through quantifiers, groups, classes, and wordy escapes", () => {
+    expect(warns("orin+")).toBe(true);
+    expect(warns("orin{2}")).toBe(true);
+    expect(warns("(orin)")).toBe(true);
+    expect(warns("(?:orin)")).toBe(true);
+    expect(warns("[Oo]rin")).toBe(true);
+    expect(warns("roll \\d")).toBe(true);
+    expect(warns("\\w+ attacks")).toBe(true);
+  });
+
+  it("stays quiet once the pattern asserts a position", () => {
+    expect(warns("\\borin\\b")).toBe(false);
+    expect(warns("\\borin")).toBe(false);
+    expect(warns("^orin")).toBe(false);
+    expect(warns("orin$")).toBe(false);
+    expect(warns("orin\\B")).toBe(false);
+    expect(warns("(?<!\\w)orin(?!\\w)")).toBe(false);
+  });
+
+  it("stays quiet when neither edge can sit inside a word", () => {
+    expect(warns(":herb:")).toBe(false);
+    expect(warns("\\(ooc\\)")).toBe(false); // escaped parens are literals
+    expect(warns("!!!")).toBe(false);
+  });
+
+  it("does not mistake class-internal ^ or escaped anchors for assertions", () => {
+    expect(warns("[^x]orin")).toBe(true); // the ^ only negates the class
+    expect(warns("orin\\$tuff")).toBe(true); // literal dollar, not an anchor
+  });
+
+  it("treats a literal closing brace as just a character", () => {
+    expect(warns("{orin}")).toBe(false); // literal braces cap both edges
+    expect(warns("orin}")).toBe(true); // the leading edge is still bare
+  });
+
+  it("is null for blank or invalid patterns (the compile error owns those)", () => {
+    expect(warns("")).toBe(false);
+    expect(warns("   ")).toBe(false);
+    expect(warns("(orin")).toBe(false);
   });
 });
 

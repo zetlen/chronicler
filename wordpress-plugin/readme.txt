@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.20.0
+Stable tag: 4.20.1
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,10 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.20.1 =
+* The "Show OOC messages" checkbox on published transcripts now shows how many messages it affects — "(3 hidden)" flips to "(3 shown)" — and a tooltip explains that OOC means out-of-character table talk.
+* The rules editors (the session editor's Transcription Rules panel and the standalone Rules screen) now warn when a pattern has no word boundaries or anchors, so a rule like "orin" no longer silently matches inside "Dorin". The warning is advisory; such rules still save and run.
 
 = 4.20.0 =
 * Transcription rules can now mark matching messages as out of character or important — the same treatments the block editor offers per message. An out-of-character match shows the author's real name in the byline and joins the transcript's "Show OOC messages" toggle, and the treatment carries through to the saved session and published transcript.

@@ -49,6 +49,11 @@ function flashCopied(link) {
  * message starts revealed so copied links always land. No control renders
  * on transcripts without OOC messages. Idempotent per root; returns a
  * detach function.
+ *
+ * A playtester's "what does this do?" (#185): the label now carries a live
+ * count — "(N hidden)" flipping to "(N shown)" — so the checkbox's effect
+ * is visible before it is ever clicked, and a plain-language tooltip
+ * spells out the OOC jargon for readers who don't know it.
  */
 export function attachOocToggle(root) {
   if (!root || root.__chroniclerOocBound) return () => {};
@@ -63,6 +68,9 @@ export function attachOocToggle(root) {
     anchored && root.contains(anchored) && anchored.closest(".slk-msg--ooc")
   );
 
+  const count = root.querySelectorAll(".slk-msg--ooc").length;
+  const noun = count === 1 ? "message" : "messages";
+
   const label = document.createElement("label");
   label.className = "slk-ooc-toggle";
   const box = document.createElement("input");
@@ -70,9 +78,18 @@ export function attachOocToggle(root) {
   box.checked = startRevealed;
   label.appendChild(box);
   label.appendChild(document.createTextNode(" Show OOC messages"));
+  const badge = document.createElement("span");
+  badge.className = "slk-ooc-count";
+  label.appendChild(badge);
   root.insertBefore(label, root.firstChild);
 
-  const apply = () => root.classList.toggle("slk-ooc-shown", box.checked);
+  const apply = () => {
+    root.classList.toggle("slk-ooc-shown", box.checked);
+    badge.textContent = box.checked ? `(${count} shown)` : `(${count} hidden)`;
+    label.title = box.checked
+      ? `Showing ${count} out-of-character ${noun} — table talk between the players, not part of the story. Uncheck to hide ${count === 1 ? "it" : "them"} again.`
+      : `This transcript hides ${count} out-of-character ${noun} — table talk between the players, not part of the story. Check to show ${count === 1 ? "it" : "them"}.`;
+  };
   apply();
   box.addEventListener("change", apply);
 

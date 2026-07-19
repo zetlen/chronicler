@@ -211,6 +211,7 @@ final class AdminPage
         echo '<input type="text" id="chronicler-rule-test" class="large-text" value=""'
             . ' spellcheck="false" autocomplete="off" placeholder="Paste a sample message to test against">';
         echo '<p class="description" id="chronicler-rule-test-result">Checks the pattern as you type.</p>';
+        echo '<p class="description" id="chronicler-rule-test-warning" style="color:#996800;" hidden></p>';
         echo '</td></tr>';
 
         echo '</table>';
@@ -225,9 +226,12 @@ final class AdminPage
      * The client-side "test this regex" nicety: compiles the pattern with
      * the browser's own RegExp — the engine that will actually run it in
      * the session editor — mirroring compileRule() in lib/transform/rules.ts
-     * (trimmed source, g/y stripped). Display-only; the server never trusts
-     * it. Inline on purpose: the no-build classic-metabox screen has no
-     * bundle to hang a file off.
+     * (trimmed source, g/y stripped). It also mirrors ruleBoundaryWarning()
+     * (#185): a non-blocking advisory when a pattern's edge can sit inside
+     * a longer word and nothing in it asserts a position, so a bare "orin"
+     * no longer silently matches "Dorin". Display-only; the server never
+     * trusts it. Inline on purpose: the no-build classic-metabox screen has
+     * no bundle to hang a file off.
      */
     private function testerScript(): void
     {
@@ -238,11 +242,85 @@ final class AdminPage
             var flags = document.getElementById('chronicler-rule-flags');
             var sample = document.getElementById('chronicler-rule-test');
             var out = document.getElementById('chronicler-rule-test-result');
-            if (!pattern || !flags || !sample || !out) {
+            var warn = document.getElementById('chronicler-rule-test-warning');
+            if (!pattern || !flags || !sample || !out || !warn) {
                 return;
+            }
+            function isEscaped(s, i) {
+                var n = 0;
+                for (var j = i - 1; j >= 0 && s[j] === '\\'; j--) n++;
+                return n % 2 === 1;
+            }
+            function hasBoundaryAssertion(src) {
+                var inClass = false;
+                for (var i = 0; i < src.length; i++) {
+                    var ch = src[i];
+                    if (ch === '\\') {
+                        var next = src[i + 1];
+                        if (!inClass && (next === 'b' || next === 'B')) return true;
+                        i++;
+                        continue;
+                    }
+                    if (inClass) {
+                        if (ch === ']') inClass = false;
+                        continue;
+                    }
+                    if (ch === '[') { inClass = true; continue; }
+                    if (ch === '^' || ch === '$') return true;
+                    if (ch === '(' && src[i + 1] === '?') {
+                        var k = src[i + 2];
+                        if (k === '=' || k === '!') return true;
+                        if (k === '<' && (src[i + 3] === '=' || src[i + 3] === '!')) return true;
+                    }
+                }
+                return false;
+            }
+            function leadingEdgeIsWordy(src) {
+                var i = 0;
+                while (src[i] === '(') {
+                    i++;
+                    if (src[i] === '?') {
+                        while (i < src.length && src[i] !== ':' && src[i] !== '>') i++;
+                        i++;
+                    }
+                }
+                var ch = src[i];
+                if (ch === undefined) return false;
+                if (ch === '\\') return src[i + 1] === 'w' || src[i + 1] === 'd';
+                if (ch === '[') return true;
+                return /[A-Za-z0-9_]/.test(ch);
+            }
+            function trailingEdgeIsWordy(src) {
+                var i = src.length - 1;
+                while (i >= 0) {
+                    var ch = src[i];
+                    if (isEscaped(src, i)) return ch === 'w' || ch === 'd';
+                    if (ch === ')' || ch === '*' || ch === '+' || ch === '?') { i--; continue; }
+                    if (ch === '}') {
+                        var open = src.lastIndexOf('{', i);
+                        if (open > 0 && /^\{\d+(,\d*)?\}$/.test(src.slice(open, i + 1))) {
+                            i = open - 1;
+                            continue;
+                        }
+                        return false;
+                    }
+                    if (ch === ']') return true;
+                    return /[A-Za-z0-9_]/.test(ch);
+                }
+                return false;
+            }
+            // Mirrors ruleBoundaryWarning() in lib/transform/rules.ts.
+            function boundaryWarning(src) {
+                if (hasBoundaryAssertion(src)) return '';
+                if (!leadingEdgeIsWordy(src) && !trailingEdgeIsWordy(src)) return '';
+                return 'This pattern also matches inside longer words — e.g. '
+                    + '“orin” matches “Dorin”. Add \\b word boundaries '
+                    + '(like \\borin\\b) to match whole words only.';
             }
             function update() {
                 var source = pattern.value.trim();
+                warn.hidden = true;
+                warn.textContent = '';
                 if (!source) {
                     out.textContent = 'Enter a pattern above; it is checked as you type.';
                     out.style.color = '';
@@ -263,6 +341,11 @@ final class AdminPage
                     out.textContent = re.test(sample.value)
                         ? 'Matches the sample text.'
                         : 'No match in the sample text.';
+                }
+                var advisory = boundaryWarning(source);
+                if (advisory) {
+                    warn.textContent = advisory;
+                    warn.hidden = false;
                 }
             }
             [pattern, flags, sample].forEach(function (el) {

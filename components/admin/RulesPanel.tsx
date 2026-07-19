@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { Group } from "@/components/Group";
-import { ruleError, type RuleMode } from "@/lib/transform/rules";
+import {
+  ruleBoundaryWarning,
+  ruleError,
+  type RuleMode,
+} from "@/lib/transform/rules";
 import { MESSAGE_VARIANTS, type MessageVariant } from "@/lib/transform/variants";
 import {
   createRule,
@@ -135,6 +139,7 @@ function AttachedRuleRow({
   onDetach: () => void;
 }) {
   const error = ruleError(rule);
+  const warning = error ? null : ruleBoundaryWarning(rule);
   const count = matchCount ?? 0;
   return (
     <div className="flex items-center gap-2">
@@ -150,6 +155,11 @@ function AttachedRuleRow({
       {error && (
         <span className="shrink-0 text-[10px] text-red-600" title={error}>
           invalid
+        </span>
+      )}
+      {warning && (
+        <span className="shrink-0 text-[10px] text-amber-600" title={warning}>
+          no \b
         </span>
       )}
       {hasData && !error && (
@@ -225,6 +235,10 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
 
   const flags = caseSensitive ? "" : "i";
   const compileProblem = ruleError({ pattern, flags });
+  // Advisory only (#185) — it never blocks saving.
+  const boundaryWarning = compileProblem
+    ? null
+    : ruleBoundaryWarning({ pattern, flags });
   const canSave = pattern.trim() !== "" && !compileProblem && !saving;
 
   async function handleSave() {
@@ -351,6 +365,9 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
 
       {compileProblem && pattern.trim() !== "" && (
         <p className="text-xs text-red-600">{compileProblem}</p>
+      )}
+      {boundaryWarning && (
+        <p className="text-xs text-amber-700">{boundaryWarning}</p>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
 
