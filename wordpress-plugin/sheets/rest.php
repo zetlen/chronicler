@@ -26,6 +26,12 @@ function chronicler_sheets_register_routes(): void {
         'permission_callback' => 'chronicler_sheets_rest_can_edit',
         'args' => ['id' => ['validate_callback' => 'chronicler_sheets_validate_numeric']],
     ]);
+    register_rest_route('chronicler/v1', '/characters/(?P<id>\d+)/opinions/(?P<prop>[a-z][a-z0-9_]*)', [
+        'methods' => 'POST',
+        'callback' => 'chronicler_sheets_rest_update_opinion',
+        'permission_callback' => 'chronicler_sheets_rest_can_edit_opinion',
+        'args' => ['id' => ['validate_callback' => 'chronicler_sheets_validate_numeric']],
+    ]);
     register_rest_route('chronicler/v1', '/characters/names', [
         'methods' => 'GET',
         'callback' => 'chronicler_sheets_rest_character_names',
@@ -79,6 +85,19 @@ function chronicler_sheets_validate_numeric($value): bool {
 
 function chronicler_sheets_rest_can_edit(WP_REST_Request $request): bool {
     return current_user_can('edit_post', (int) $request['id']);
+}
+
+/**
+ * The opinions write gate (#183): edit_post on the PLAYER CHARACTER whose
+ * set is being written — its owning player or a GM — not on the target
+ * character. That inversion is the whole feature: a player writing their
+ * opinion of an NPC holds no rights on the NPC itself. The handler
+ * re-verifies the pc param is a real published PC; here it only needs to be
+ * a post the caller may edit (a nonexistent id fails current_user_can).
+ */
+function chronicler_sheets_rest_can_edit_opinion(WP_REST_Request $request): bool {
+    $pc = $request->get_param('pc');
+    return is_numeric($pc) && current_user_can('edit_post', (int) $pc);
 }
 
 /** The character post + its parsed template, or a WP_Error with status. */
@@ -136,6 +155,30 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
         if (!$can_edit && chronicler_sheets_is_owner_only($property)) {
             continue;
         }
+        // Opinions (#183): the page render's visibility authority decides —
+        // NPC pages only, and each set only for its own player (GMs see all;
+        // a set is a personal notebook) — so this endpoint serves exactly
+        // the sets the page shows. The map is keyed by PC id; `pcs` names
+        // each set and carries the caller's per-PC write right. Exempt from
+        // the NPC withhold below: NPC pages are where opinions live.
+        if ($property['type'] === 'opinions') {
+            $sets = chronicler_sheets_visible_opinion_sets($post->ID, $property);
+            if ($sets === null || $sets === []) {
+                continue;
+            }
+            $value = [];
+            $pcs = [];
+            foreach ($sets as $set) {
+                $value[$set['pc']] = $set['value'];
+                $pcs[] = ['id' => $set['pc'], 'name' => $set['name'], 'canEdit' => $set['canEdit']];
+            }
+            $properties[] = $property + [
+                'value' => $value,
+                'pcs' => $pcs,
+                'display' => chronicler_sheets_display_value($property, $value),
+            ];
+            continue;
+        }
         if ($is_npc && !$can_edit) {
             continue;
         }
@@ -145,17 +188,37 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
             'display' => chronicler_sheets_display_value($property, $value),
         ];
     }
+    // The layout must agree with the property list — a withheld property's
+    // ID stays hidden too, not just its value. Two gates diverge from
+    // visible_layout: the NPC withhold (#176) drops everything a non-editor
+    // would see, EXCEPT opinions (#183), which appear exactly when they were
+    // served above (they also vanish on non-NPC characters, where the
+    // property loop skipped them for every caller).
+    $served = [];
+    foreach ($properties as $p) {
+        $served[$p['id']] = true;
+    }
+    $layout = [];
+    foreach (chronicler_sheets_visible_layout($template, $is_gm, $can_edit) as $section) {
+        $section['properties'] = array_values(array_filter(
+            $section['properties'],
+            function ($pid) use ($template, $served, $is_npc, $can_edit) {
+                if (($template['properties'][$pid]['type'] ?? null) === 'opinions') {
+                    return isset($served[$pid]);
+                }
+                return !$is_npc || $can_edit;
+            }
+        ));
+        if ($section['properties'] !== []) {
+            $layout[] = $section;
+        }
+    }
     return [
         'characterId' => $post->ID,
         'title' => get_the_title($post),
         'canEdit' => $can_edit,
         'system' => $template['system'],
-        // The NPC gate empties the layout the same way it empties the
-        // property list, so the two stay in agreement (and the withheld
-        // property IDS stay hidden too, not just their values).
-        'layout' => $is_npc && !$can_edit
-            ? []
-            : chronicler_sheets_visible_layout($template, $is_gm, $can_edit),
+        'layout' => $layout,
         'properties' => $properties,
     ];
 }
@@ -209,6 +272,18 @@ function chronicler_sheets_rest_update_property(WP_REST_Request $request) {
         );
     }
 
+    // Opinions (#183) never write through this whole-property route — each
+    // set rides the opinions endpoint behind its own per-PC permission. The
+    // schema also refuses in apply_op; this earlier gate exists for the
+    // honest error message (the not-live text below would say "level-up").
+    if ($property['type'] === 'opinions') {
+        return new WP_Error(
+            'chronicler_use_opinions',
+            $property['label'] . ' is recorded per player character — write it through the opinions endpoint.',
+            ['status' => 403]
+        );
+    }
+
     if (!chronicler_sheets_is_live($property)) {
         return new WP_Error(
             'chronicler_not_live',
@@ -243,6 +318,72 @@ function chronicler_sheets_rest_update_property(WP_REST_Request $request) {
         'value' => $result,
         'display' => chronicler_sheets_display_value($property, $result),
         'derived' => $derived,
+    ];
+}
+
+/**
+ * The opinions write surface (#183): apply {op, value} to ONE field (rating
+ * or notes) of ONE player character's opinion set on an NPC. The rating
+ * borrows track semantics (set/adjust, clamped 0..length); notes borrow
+ * text semantics (set, trimmed) and are sanitized to plain multi-line text
+ * — the render escapes them, never treats them as markup.
+ */
+function chronicler_sheets_rest_update_opinion(WP_REST_Request $request) {
+    $context = chronicler_sheets_rest_context((int) $request['id']);
+    if (is_wp_error($context)) {
+        return $context;
+    }
+    [$post, $template] = $context;
+    $prop_id = (string) $request['prop'];
+    $property = $template['properties'][$prop_id] ?? null;
+    if ($property === null || $property['type'] !== 'opinions') {
+        return new WP_Error('chronicler_no_property', "The sheet has no \"$prop_id\" opinions property.", ['status' => 404]);
+    }
+    // Reads render opinions on NPC pages only; a write surface that accepted
+    // more would store values no read surface ever shows.
+    if (!chronicler_sheets_is_npc($post->ID)) {
+        return new WP_Error('chronicler_no_property', 'Opinions live on NPC pages.', ['status' => 404]);
+    }
+    $pc_id = (int) $request->get_param('pc');
+    $pc = get_post($pc_id);
+    if (!$pc || $pc->post_type !== 'chr_character' || $pc->post_status !== 'publish' || chronicler_sheets_is_npc($pc_id)) {
+        return new WP_Error('chronicler_no_pc', 'No such player character.', ['status' => 404]);
+    }
+    // Backstop of the route's permission_callback, same defense-in-depth as
+    // the gm_only/owner_only gates on the properties route: the per-PC gate
+    // must hold even if that callback is ever loosened or the handler gains
+    // another caller.
+    if (!current_user_can('edit_post', $pc_id)) {
+        return new WP_Error('chronicler_forbidden', 'Only ' . get_the_title($pc_id) . "'s player (or a GM) may write this opinion.", ['status' => 403]);
+    }
+    $field = $request->get_param('field');
+    if (!in_array($field, ['rating', 'notes'], true)) {
+        return new WP_Error('chronicler_bad_request', 'Body must name a "field": "rating" or "notes".', ['status' => 400]);
+    }
+    $op = $request->get_param('op');
+    if (!is_string($op)) {
+        return new WP_Error('chronicler_bad_request', 'Body must include an "op".', ['status' => 400]);
+    }
+    $value = $request->get_param('value');
+    if (is_string($value)) {
+        $value = sanitize_textarea_field($value);
+    }
+    $current = chronicler_sheets_get_opinion($post->ID, $property, $pc_id);
+    $facet = $field === 'rating'
+        ? ['id' => $prop_id, 'label' => $property['label'] . ' rating', 'type' => 'track', 'length' => $property['length']]
+        : ['id' => $prop_id, 'label' => $property['label'] . ' notes', 'type' => 'text'];
+    $result = chronicler_sheets_apply_op($facet, $current[$field], $op, $value);
+    if (is_wp_error($result)) {
+        $result->add_data(['status' => 400]);
+        return $result;
+    }
+    $current[$field] = $result;
+    chronicler_sheets_set_opinion($post->ID, $property, $pc_id, $current);
+    return [
+        'prop' => $prop_id,
+        'pc' => $pc_id,
+        'value' => $current,
+        'display' => $current['rating'] . '/' . (int) $property['length'],
     ];
 }
 

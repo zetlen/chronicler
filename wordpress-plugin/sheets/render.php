@@ -129,6 +129,46 @@ function chronicler_sheets_suppress_theme_thumbnail(string $html, int $post_id):
 }
 add_filter('post_thumbnail_html', 'chronicler_sheets_suppress_theme_thumbnail', 10, 2);
 
+/**
+ * The opinion sets (#183) one viewer receives for one character, in the
+ * index's PC order, or null when the property yields nothing for them at all.
+ * This is the single visibility authority for opinions — the page render and
+ * the REST /sheet serializer both call it, so the two surfaces cannot drift:
+ *
+ *  - Opinions render on NPC pages only. On a PC's page the property is
+ *    simply absent (null), for every viewer including GMs.
+ *  - Each set is its player's personal notebook: it renders solely for
+ *    viewers who can edit ITS player character — that PC's owning player —
+ *    with GMs seeing every set. Fellow players, the public, and roleless
+ *    accounts get no markup and no values — dropped, never hidden, per the
+ *    house audience-gate idiom. (The edit_chr_characters check is a
+ *    fail-closed backstop; anyone who can edit a PC already holds it.)
+ *  - canEdit is that same per-PC edit_post right: the write gate
+ *    (rest.php's opinions route) in read form. It can lag the read right
+ *    only for a hand-rolled role holding edit_others_chr_characters without
+ *    the edit_published tier, so the render keeps a read-only fallback.
+ */
+function chronicler_sheets_visible_opinion_sets(int $post_id, array $property): ?array {
+    if (!chronicler_sheets_is_npc($post_id) || !current_user_can('edit_chr_characters')) {
+        return null;
+    }
+    $is_gm = current_user_can('edit_others_chr_characters');
+    $sets = [];
+    foreach (chronicler_sheets_player_characters() as $pc_id) {
+        $can_edit_pc = current_user_can('edit_post', $pc_id);
+        if (!$is_gm && !$can_edit_pc) {
+            continue;
+        }
+        $sets[] = [
+            'pc' => $pc_id,
+            'name' => get_the_title($pc_id),
+            'value' => chronicler_sheets_get_opinion($post_id, $property, $pc_id),
+            'canEdit' => $can_edit_pc,
+        ];
+    }
+    return $sets;
+}
+
 function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): string {
     $template = chronicler_sheets_template_for_character($post_id);
     if ($template === null) {
@@ -167,6 +207,7 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
     // to show is dropped so no empty header remains.
     $trait_props = [];
     $body_sections = [];
+    $opinion_sets = [];
     foreach (chronicler_sheets_layout_sections($template) as $section) {
         $visible = [];
         foreach ($section['properties'] as $pid) {
@@ -179,6 +220,19 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
             // the markup rather than hiding it, so fellow players and the
             // public never receive the content.
             if (!$can_edit && chronicler_sheets_is_owner_only($property)) {
+                continue;
+            }
+            // Opinions (#183) are exempt from the NPC withhold below — NPC
+            // pages are where they live, and their audience is the table
+            // (see chronicler_sheets_visible_opinion_sets), not this
+            // character's editors. Nothing to show still drops the markup.
+            if ($property['type'] === 'opinions') {
+                $sets = chronicler_sheets_visible_opinion_sets($post_id, $property);
+                if ($sets === null || $sets === []) {
+                    continue;
+                }
+                $opinion_sets[$pid] = $sets;
+                $visible[] = $pid;
                 continue;
             }
             // On an NPC, EVERY property is that audience (#176): stats are
@@ -206,6 +260,17 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
         }
     }
 
+    // canOpine (#183): whether any rendered opinion set is this viewer's to
+    // edit. sheet.js activates on it even when canEdit is false — a player
+    // on an NPC page can't touch the stats but can write their own opinion.
+    $can_opine = false;
+    foreach ($opinion_sets as $sets) {
+        foreach ($sets as $set) {
+            $can_opine = $can_opine || $set['canEdit'];
+        }
+    }
+    $boot['canOpine'] = $can_opine;
+
     // alignwide: block themes grant their sanctioned wide measure to this
     // class — the sheet escapes blog-post column width the theme's own way.
     // Classic themes implement alignwide with NEGATIVE margins (overflowing
@@ -221,7 +286,11 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
     // without this, stats that render fine for the GM but vanish for players
     // read as a caching bug, not a feature.
     if ($is_npc && $can_edit) {
-        $html .= '<p class="chr-sheet__npc-note">Non-player character: visitors see only the portrait, name, tagline, and intro. The stats below are visible to you because you can edit this character.</p>';
+        $npc_note = 'Non-player character: visitors see only the portrait, name, tagline, and intro. The stats below are visible to you because you can edit this character.';
+        if ($opinion_sets !== []) {
+            $npc_note .= ' Each logged-in player also sees an opinion box here — a private notebook only they (and you) can read.';
+        }
+        $html .= '<p class="chr-sheet__npc-note">' . $npc_note . '</p>';
     }
     // The unstructured rich block (post content) sits between header and stats.
     if (trim($intro) !== '') {
@@ -234,6 +303,12 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
             . '<h2>' . esc_html($section['section']) . '</h2>';
         foreach ($section['properties'] as $pid) {
             $property = $template['properties'][$pid];
+            // Opinions render as one labeled sub-block per PC ("Alec's
+            // Opinion"), so the property-level label would only repeat them.
+            if ($property['type'] === 'opinions') {
+                $html .= chronicler_sheets_render_opinions($property, $opinion_sets[$pid]);
+                continue;
+            }
             $value = chronicler_sheets_get_value($post_id, $property);
             $editable = $can_edit && chronicler_sheets_is_live($property);
             // "Moves" header over a lone "Moves" label is noise — hide the
@@ -284,12 +359,7 @@ function chronicler_sheets_render_property(array $property, $value, bool $editab
 
     switch ($property['type']) {
         case 'track':
-            $html .= '<span class="chr-track">';
-            for ($i = 0; $i < $property['length']; $i++) {
-                $marked = $i < $value ? 'true' : 'false';
-                $html .= '<button type="button" class="chr-track__box" data-index="' . $i . '" aria-pressed="' . $marked . '"></button>';
-            }
-            $html .= '</span>';
+            $html .= chronicler_sheets_render_track_boxes($property['length'], (int) $value);
             break;
         case 'number':
         case 'counter':
@@ -325,6 +395,51 @@ function chronicler_sheets_render_property(array $property, $value, bool $editab
     }
 
     return $html . $detail_html . $badge . '</div>';
+}
+
+/** The editable track control: one aria-pressed button per box (sheet.js wires clicks). */
+function chronicler_sheets_render_track_boxes(int $length, int $value): string {
+    $html = '<span class="chr-track">';
+    for ($i = 0; $i < $length; $i++) {
+        $marked = $i < $value ? 'true' : 'false';
+        $html .= '<button type="button" class="chr-track__box" data-index="' . $i . '" aria-pressed="' . $marked . '"></button>';
+    }
+    return $html . '</span>';
+}
+
+/**
+ * The opinions property (#183): one sub-block per player character — the
+ * PC-labeled rating track and notes box — each editable only where
+ * chronicler_sheets_visible_opinion_sets said this viewer holds the pen.
+ * Every set is a .chr-prop of its own, addressed by data-prop + data-pc, so
+ * sheet.js routes a click in "Alec's Opinion" to Alec's row and no other.
+ * Notes are plain text (authored in a bare textarea, sanitized to text on
+ * write), so the static path escapes rather than renders them.
+ */
+function chronicler_sheets_render_opinions(array $property, array $sets): string {
+    $html = '';
+    foreach ($sets as $set) {
+        $rating = $set['value']['rating'];
+        $notes = $set['value']['notes'];
+        $html .= '<div class="chr-prop chr-prop--' . esc_attr($property['id']) . ' chr-opinion" data-prop="' . esc_attr($property['id'])
+            . '" data-pc="' . (int) $set['pc'] . '" data-type="opinions" data-length="' . (int) $property['length'] . '">';
+        $html .= '<span class="chr-prop__label">' . esc_html($set['name'] . '’s ' . $property['label']) . '</span>';
+        if ($set['canEdit']) {
+            $html .= chronicler_sheets_render_track_boxes($property['length'], $rating);
+            $html .= '<span class="chr-prop__display">' . $rating . '/' . (int) $property['length'] . '</span>';
+            $html .= '<textarea class="chr-longtext chr-opinion__notes" rows="3" placeholder="Notes">' . esc_textarea($notes) . '</textarea>';
+        } else {
+            $html .= '<span class="chr-prop__static">'
+                . chronicler_sheets_render_static(['type' => 'track', 'length' => $property['length']], $rating)
+                . '</span>';
+            $html .= '<span class="chr-prop__display">' . $rating . '/' . (int) $property['length'] . '</span>';
+            if (trim($notes) !== '') {
+                $html .= '<p class="chr-opinion__notes-static">' . nl2br(esc_html($notes)) . '</p>';
+            }
+        }
+        $html .= '</div>';
+    }
+    return $html;
 }
 
 /** Non-interactive value markup for properties the viewer cannot edit here. */

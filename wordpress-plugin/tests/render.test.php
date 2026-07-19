@@ -25,6 +25,13 @@ if (!function_exists('current_user_can')) {
             return !empty($GLOBALS['chr_test_is_gm']);
         }
         if ($cap === 'edit_post') {
+            // Per-post overrides first (#183 needs "can edit their own PC
+            // but not this NPC"); the blanket global keeps every older
+            // suite's single-answer behavior.
+            $id = isset($args[0]) ? (int) $args[0] : null;
+            if ($id !== null && isset($GLOBALS['chr_test_can_edit_posts'][$id])) {
+                return !empty($GLOBALS['chr_test_can_edit_posts'][$id]);
+            }
             return !empty($GLOBALS['chr_test_can_edit']);
         }
         // Any other capability answers from a generic map (defaults to
@@ -101,9 +108,12 @@ if (!function_exists('selected')) {
     function selected($a, $b = true, $echo = true) { return $a == $b ? ' selected' : ''; }
 }
 
-// Post/author lookups used by the masthead.
+// Post/author lookups used by the masthead (and #183's per-PC set labels).
 if (!function_exists('get_the_title')) {
-    function get_the_title($id = 0) { return 'Test Character'; }
+    function get_the_title($id = 0) {
+        $key = is_object($id) ? (int) ($id->ID ?? 0) : (int) $id;
+        return $GLOBALS['chr_test_titles'][$key] ?? 'Test Character';
+    }
 }
 if (!function_exists('get_the_author_meta')) {
     function get_the_author_meta($field, $id = 0) { return 'Alice'; }
@@ -147,6 +157,25 @@ if (!function_exists('chronicler_sheets_is_npc')) {
     // so suites drive NPC status the way production does: chr_npc = '1'.
     function chronicler_sheets_is_npc(int $post_id): bool {
         return ($GLOBALS['chr_test_post_meta'][$post_id]['chr_npc'] ?? '') === '1';
+    }
+}
+// Opinions storage (#183), normally in post-types.php: PC enumeration from a
+// test list, sets from a [character][pc] map (normalized like production),
+// writes recorded for the save-path suites AND written back for re-reads.
+if (!function_exists('chronicler_sheets_player_characters')) {
+    function chronicler_sheets_player_characters(): array {
+        return $GLOBALS['chr_test_pcs'] ?? [];
+    }
+}
+if (!function_exists('chronicler_sheets_get_opinion')) {
+    function chronicler_sheets_get_opinion(int $post_id, array $property, int $pc_id): array {
+        return chronicler_sheets_normalize_opinion($property, $GLOBALS['chr_test_opinions'][$post_id][$pc_id] ?? null);
+    }
+}
+if (!function_exists('chronicler_sheets_set_opinion')) {
+    function chronicler_sheets_set_opinion(int $post_id, array $property, int $pc_id, array $set): void {
+        $GLOBALS['chr_saved_opinions'][] = [$property['id'], $pc_id];
+        $GLOBALS['chr_test_opinions'][$post_id][$pc_id] = chronicler_sheets_normalize_opinion($property, $set);
     }
 }
 
@@ -531,3 +560,91 @@ check(
 check('NPC editor: the note explains the visitor view', strpos($npc_editor, 'chr-sheet__npc-note') !== false);
 check('NPC editor: "Played by" still omitted', strpos($npc_editor, 'Played by') === false);
 unset($GLOBALS['chr_test_post_meta'][11]);
+
+// --- Opinions (#183): per-PC opinion sets on NPC pages — each a personal
+// notebook. A set renders exactly for the viewer who can edit ITS player
+// character (plus GMs, who see every set) — the one gate that pierces the
+// NPC withhold; fellow players and the public get no markup at all. ---
+$opinion_template = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Test', 'version' => 1,
+    'properties' => [
+        ['id' => 'str', 'label' => 'Strength', 'type' => 'number', 'min' => 0, 'max' => 5],
+        ['id' => 'opinions', 'label' => 'Opinion', 'type' => 'opinions', 'length' => 6],
+    ],
+    'layout' => [
+        ['section' => 'Stats', 'properties' => ['str']],
+        ['section' => 'Opinions', 'properties' => ['opinions']],
+    ],
+]));
+check('opinions render fixture parses', is_array($opinion_template));
+$GLOBALS['chr_test_template'] = $opinion_template;
+$GLOBALS['chr_test_values'] = ['str' => 3];
+$GLOBALS['chr_test_pcs'] = [21, 22];
+$GLOBALS['chr_test_titles'] = [21 => 'Alec', 22 => 'Sam'];
+$GLOBALS['chr_test_opinions'] = [12 => [
+    21 => ['rating' => 2, 'notes' => 'ALEC_OPINION_NOTES'],
+    22 => ['rating' => 5, 'notes' => 'SAM_OPINION_NOTES'],
+]];
+$GLOBALS['chr_test_post_meta'][12]['chr_npc'] = '1';
+
+// The public: no table membership, no opinions — and the NPC withhold still
+// hides the stats, so the page stays a pure lore page.
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+$GLOBALS['chr_test_user_caps'] = [];
+$op_public = chronicler_sheets_render_sheet(12, 'INTRO');
+check('opinions public: no set markup', strpos($op_public, 'chr-opinion') === false);
+check('opinions public: no notes leak', strpos($op_public, 'ALEC_OPINION_NOTES') === false && strpos($op_public, 'SAM_OPINION_NOTES') === false);
+check('opinions public: no Opinions section heading', strpos($op_public, '<h2>Opinions</h2>') === false);
+check('opinions public: boot canOpine false', strpos($op_public, '"canOpine":false') !== false);
+
+// A player (Alec's): their own set only — a personal notebook. The other
+// player's set is dropped whole: no label, no markup, no values.
+$GLOBALS['chr_test_user_caps'] = ['edit_chr_characters' => true];
+$GLOBALS['chr_test_can_edit_posts'] = [21 => true, 22 => false];
+$op_player = chronicler_sheets_render_sheet(12, 'INTRO');
+check('opinions player: their own set renders, PC-labeled', strpos($op_player, 'Alec’s Opinion') !== false);
+check('opinions player: the set is addressed by data-pc', strpos($op_player, 'data-pc="21"') !== false);
+check(
+    "opinions player: the other player's set is dropped whole",
+    strpos($op_player, 'Sam’s Opinion') === false
+        && strpos($op_player, 'data-pc="22"') === false
+        && strpos($op_player, 'SAM_OPINION_NOTES') === false
+);
+check(
+    'opinions player: their set is editable',
+    substr_count($op_player, 'textarea class="chr-longtext chr-opinion__notes"') === 1
+);
+check('opinions player: stats stay withheld (the NPC gate holds)', strpos($op_player, '<h2>Stats</h2>') === false);
+check('opinions player: boot canOpine true', strpos($op_player, '"canOpine":true') !== false);
+check('opinions player: boot canEdit still false', strpos($op_player, '"canEdit":false') !== false);
+
+// The GM: every player's set, every pen, plus the full stat block and the
+// widened note.
+$GLOBALS['chr_test_is_gm'] = true;
+$GLOBALS['chr_test_can_edit'] = true;
+unset($GLOBALS['chr_test_can_edit_posts']);
+$op_gm = chronicler_sheets_render_sheet(12, 'INTRO');
+check('opinions GM: every set renders', strpos($op_gm, 'Alec’s Opinion') !== false && strpos($op_gm, 'Sam’s Opinion') !== false);
+check('opinions GM: every set editable', substr_count($op_gm, 'textarea class="chr-longtext chr-opinion__notes"') === 2);
+check('opinions GM: stats render too', strpos($op_gm, '<h2>Stats</h2>') !== false);
+check('opinions GM: the NPC note explains the private notebooks', strpos($op_gm, 'opinion box') !== false);
+
+// On a PC's page the property is simply absent — for every viewer.
+unset($GLOBALS['chr_test_post_meta'][12]);
+$op_on_pc = chronicler_sheets_render_sheet(12, 'INTRO');
+check('opinions on a PC page: nothing renders, GM included', strpos($op_on_pc, 'chr-opinion') === false && strpos($op_on_pc, '<h2>Opinions</h2>') === false);
+$GLOBALS['chr_test_post_meta'][12]['chr_npc'] = '1';
+
+// A campaign with no PCs yet renders no empty Opinions section.
+$GLOBALS['chr_test_pcs'] = [];
+$op_no_pcs = chronicler_sheets_render_sheet(12, 'INTRO');
+check('opinions with no PCs: section dropped', strpos($op_no_pcs, '<h2>Opinions</h2>') === false);
+
+unset(
+    $GLOBALS['chr_test_post_meta'][12],
+    $GLOBALS['chr_test_pcs'],
+    $GLOBALS['chr_test_titles'],
+    $GLOBALS['chr_test_opinions'],
+    $GLOBALS['chr_test_user_caps']
+);

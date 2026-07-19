@@ -262,6 +262,25 @@
   background: var(--chr-mark);
   border-color: var(--chr-mark);
 }
+/* Per-PC opinion sets on NPC pages (#183). Each set is a .chr-prop of its
+   own ("Alec's Opinion": rating circles + notes), so the label/track/display
+   rules above already apply; the notes box drops to its own row and stays a
+   note's height rather than inheriting the 12rem bio-editor minimum. */
+.chr-opinion__notes {
+  flex-basis: 100%;
+  min-height: 4rem;
+}
+.chr-opinion__notes-static {
+  flex-basis: 100%;
+  margin: 0.1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+/* Someone else's set reads quieter than yours: their circles and note are
+   reference material, not an input inviting a click. */
+.chr-opinion .chr-prop__static,
+.chr-opinion__notes-static {
+  opacity: 0.85;
+}
 /* Bio/notes images: authored inline in a longtext property's rich content
    (issue #68). The wp-admin "Insert Image" button (bio-image.js) drops a
    bare <img> with no width/height/style — sizing is controlled entirely

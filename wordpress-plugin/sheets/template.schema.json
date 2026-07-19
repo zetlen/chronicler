@@ -76,7 +76,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["number", "track", "counter", "toggle", "select", "checklist", "text", "longtext", "list"],
+          "enum": ["number", "track", "counter", "toggle", "select", "checklist", "text", "longtext", "list", "opinions"],
           "description": "What kind of value this property holds.",
           "markdownEnumDescriptions": [
             "A whole number, optionally bounded by `min`/`max`. Negative ranges render signed (e.g. +2).",
@@ -87,7 +87,8 @@
             "Any subset of `options`, each checked on or off.",
             "A short single-line text field.",
             "A multi-line rich-text field.",
-            "A repeatable list of entries, each with its own `fields`. Edited in wp-admin only."
+            "A repeatable list of entries, each with its own `fields`. Edited in wp-admin only.",
+            "One opinion set per player character — a 0..`length` rating track plus a notes box, labeled with the PC's name. Renders on NPC pages only. Each set is a personal notebook: visible and live-editable solely by its PC's own player, with GMs seeing every set."
           ]
         },
         "live": {
@@ -139,6 +140,10 @@
       "allOf": [
         {
           "if": { "required": ["type"], "properties": { "type": { "const": "track" } } },
+          "then": { "required": ["length"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "opinions" } } },
           "then": { "required": ["length"] }
         },
         {

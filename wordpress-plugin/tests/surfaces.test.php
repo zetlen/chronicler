@@ -416,3 +416,204 @@ check(
     'Active box on a PC: enabled input posts chr_active',
     strpos($active_box_pc, 'name="chr_active"') !== false && strpos($active_box_pc, 'disabled') === false
 );
+
+// --- Opinions (#183): the REST read pierces the NPC withhold, but each set
+// is a personal notebook — served only to its own player (GMs get all) —
+// and the write route's permission is edit_post on the PLAYER CHARACTER,
+// not on the target NPC. ---
+$GLOBALS['chr_test_template'] = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Test', 'version' => 1,
+    'properties' => [
+        ['id' => 'str', 'label' => 'Strength', 'type' => 'number', 'min' => 0, 'max' => 5],
+        ['id' => 'opinions', 'label' => 'Opinion', 'type' => 'opinions', 'length' => 6],
+    ],
+    'layout' => [
+        ['section' => 'Stats', 'properties' => ['str']],
+        ['section' => 'Opinions', 'properties' => ['opinions']],
+    ],
+]));
+check('opinions REST fixture parses', is_array($GLOBALS['chr_test_template']));
+$GLOBALS['chr_test_values'] = ['str' => 3];
+$GLOBALS['chr_test_pcs'] = [21, 22];
+$GLOBALS['chr_test_titles'] = [21 => 'Alec', 22 => 'Sam'];
+$GLOBALS['chr_test_opinions'] = [7 => [
+    21 => ['rating' => 2, 'notes' => 'ALEC_OPINION_NOTES'],
+    22 => ['rating' => 5, 'notes' => 'SAM_OPINION_NOTES'],
+]];
+$GLOBALS['chr_test_post_meta'][7]['chr_npc'] = '1';
+
+$chr_find_prop = function (array $body, string $id) {
+    foreach ($body['properties'] as $p) {
+        if ($p['id'] === $id) {
+            return $p;
+        }
+    }
+    return null;
+};
+
+// Anonymous/public: no table membership — the property vanishes whole.
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+$GLOBALS['chr_test_user_caps'] = [];
+$rest_op_public = chronicler_sheets_rest_get_sheet($req);
+check('REST opinions public: property omitted', $chr_find_prop($rest_op_public, 'opinions') === null);
+check('REST opinions public: layout emptied to match', $rest_op_public['layout'] === []);
+check('REST opinions public: no notes serialized', strpos(json_encode($rest_op_public), 'OPINION_NOTES') === false);
+
+// A player (Alec's): their own set only — the other player's never
+// serializes, value and name alike.
+$GLOBALS['chr_test_user_caps'] = ['edit_chr_characters' => true];
+$GLOBALS['chr_test_can_edit_posts'] = [21 => true, 22 => false];
+$rest_op_player = chronicler_sheets_rest_get_sheet($req);
+$chr_op_served = $chr_find_prop($rest_op_player, 'opinions');
+check('REST opinions player: only their own set served', is_array($chr_op_served) && array_keys($chr_op_served['value']) === [21]);
+check("REST opinions player: the other player's set never serializes", strpos(json_encode($rest_op_player), 'SAM_OPINION_NOTES') === false);
+check(
+    'REST opinions player: pcs metadata covers exactly their set',
+    is_array($chr_op_served) && $chr_op_served['pcs'] === [['id' => 21, 'name' => 'Alec', 'canEdit' => true]]
+);
+check('REST opinions player: stats still withheld (NPC gate holds)', $chr_find_prop($rest_op_player, 'str') === null);
+check(
+    'REST opinions player: layout keeps exactly the opinions section',
+    count($rest_op_player['layout']) === 1 && $rest_op_player['layout'][0]['properties'] === ['opinions']
+);
+
+// The GM: sheet whole, every player's set included.
+$GLOBALS['chr_test_is_gm'] = true;
+$GLOBALS['chr_test_can_edit'] = true;
+unset($GLOBALS['chr_test_can_edit_posts']);
+$rest_op_gm = chronicler_sheets_rest_get_sheet($req);
+check('REST opinions GM: stats and opinions both served', $chr_find_prop($rest_op_gm, 'str') !== null && $chr_find_prop($rest_op_gm, 'opinions') !== null);
+check('REST opinions GM: every set served', array_keys($chr_find_prop($rest_op_gm, 'opinions')['value']) === [21, 22]);
+check('REST opinions GM: full layout', count($rest_op_gm['layout']) === 2);
+
+// On a non-NPC character the property is absent for everyone, GM included.
+unset($GLOBALS['chr_test_post_meta'][7]['chr_npc']);
+$rest_op_on_pc = chronicler_sheets_rest_get_sheet($req);
+check('REST opinions on a PC: property omitted for the GM too', $chr_find_prop($rest_op_on_pc, 'opinions') === null);
+$GLOBALS['chr_test_post_meta'][7]['chr_npc'] = '1';
+
+// --- The opinions write route ---
+$GLOBALS['chr_test_template'] = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Test', 'version' => 1,
+    'properties' => [
+        ['id' => 'str', 'label' => 'Strength', 'type' => 'number', 'min' => 0, 'max' => 5, 'live' => true],
+        ['id' => 'opinions', 'label' => 'Opinion', 'type' => 'opinions', 'length' => 6],
+    ],
+]));
+$chr_op_req = function (array $params) {
+    return new WP_REST_Request($params + ['id' => 7, 'prop' => 'opinions']);
+};
+
+// Registration pin, like the properties route: the permission callback IS
+// the per-PC gate — a swap or widening must fail here, not ship silently.
+$chr_op_route = $GLOBALS['chr_registered_routes']['/characters/(?P<id>\d+)/opinions/(?P<prop>[a-z][a-z0-9_]*)'] ?? null;
+check('opinions route registered', is_array($chr_op_route));
+check(
+    'opinions route permission is edit_post on the PC',
+    is_array($chr_op_route) && ($chr_op_route['permission_callback'] ?? null) === 'chronicler_sheets_rest_can_edit_opinion'
+);
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+$GLOBALS['chr_test_can_edit_posts'] = [21 => true, 22 => false];
+check('opinions permission: own PC passes', chronicler_sheets_rest_can_edit_opinion($chr_op_req(['pc' => 21])) === true);
+check("opinions permission: another player's PC fails", chronicler_sheets_rest_can_edit_opinion($chr_op_req(['pc' => 22])) === false);
+check('opinions permission: a non-numeric pc fails closed', chronicler_sheets_rest_can_edit_opinion($chr_op_req(['pc' => 'x'])) === false);
+
+// A player writes their own set: rating clamps to the track, notes trim.
+$GLOBALS['chr_saved_opinions'] = [];
+$chr_w1 = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'rating', 'op' => 'set', 'value' => 4]));
+check('opinions write: own rating stored and echoed', is_array($chr_w1) && $chr_w1['value']['rating'] === 4 && $chr_w1['display'] === '4/6');
+$chr_w2 = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'rating', 'op' => 'adjust', 'value' => 9]));
+check('opinions write: adjust clamps to length', is_array($chr_w2) && $chr_w2['value']['rating'] === 6);
+$chr_w3 = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'notes', 'op' => 'set', 'value' => '  reformed?  ']));
+check('opinions write: notes sanitized and stored beside the rating', is_array($chr_w3) && $chr_w3['value'] === ['rating' => 6, 'notes' => 'reformed?']);
+check('opinions write: persisted per (property, pc)', in_array(['opinions', 21], $GLOBALS['chr_saved_opinions'], true));
+
+// The handler's own backstop refuses another player's set even though the
+// route gate already blocks it — same defense-in-depth as gm_only/owner_only.
+$chr_w_other = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 22, 'field' => 'rating', 'op' => 'set', 'value' => 1]));
+check("opinions write: another player's set refused by the handler itself", is_wp_error($chr_w_other) && $chr_w_other->code === 'chronicler_forbidden');
+
+// Shape errors: unknown field, missing op, unknown pc, pc-that-is-an-NPC.
+$chr_w_field = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'mood', 'op' => 'set', 'value' => 1]));
+check('opinions write: unknown field is a 400', is_wp_error($chr_w_field) && $chr_w_field->code === 'chronicler_bad_request');
+$chr_w_noop = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'rating']));
+check('opinions write: missing op is a 400', is_wp_error($chr_w_noop) && $chr_w_noop->code === 'chronicler_bad_request');
+$GLOBALS['chr_test_post_meta'][23]['chr_npc'] = '1';
+$GLOBALS['chr_test_can_edit_posts'][23] = true;
+$chr_w_npc_pc = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 23, 'field' => 'rating', 'op' => 'set', 'value' => 1]));
+check('opinions write: an NPC cannot hold the pen', is_wp_error($chr_w_npc_pc) && $chr_w_npc_pc->code === 'chronicler_no_pc');
+unset($GLOBALS['chr_test_post_meta'][23], $GLOBALS['chr_test_can_edit_posts'][23]);
+
+// A non-opinions property 404s here; an opinions property 403s on the
+// generic properties route with the honest pointer, even for its editor.
+$chr_w_wrong = chronicler_sheets_rest_update_opinion(new WP_REST_Request(['id' => 7, 'prop' => 'str', 'pc' => 21, 'field' => 'rating', 'op' => 'set', 'value' => 1]));
+check('opinions write: a non-opinions property is a 404', is_wp_error($chr_w_wrong) && $chr_w_wrong->code === 'chronicler_no_property');
+$GLOBALS['chr_test_can_edit'] = true;
+$chr_generic = chronicler_sheets_rest_update_property(new WP_REST_Request(['id' => 7, 'prop' => 'opinions', 'op' => 'set', 'value' => []]));
+check('properties route: opinions refused with the opinions-endpoint pointer', is_wp_error($chr_generic) && $chr_generic->code === 'chronicler_use_opinions');
+$GLOBALS['chr_test_can_edit'] = false;
+
+// The write surface refuses non-NPC targets, matching the read surfaces.
+unset($GLOBALS['chr_test_post_meta'][7]['chr_npc']);
+$chr_w_pc_target = chronicler_sheets_rest_update_opinion($chr_op_req(['pc' => 21, 'field' => 'rating', 'op' => 'set', 'value' => 1]));
+check('opinions write: a non-NPC target is a 404', is_wp_error($chr_w_pc_target) && $chr_w_pc_target->code === 'chronicler_no_property');
+$GLOBALS['chr_test_post_meta'][7]['chr_npc'] = '1';
+
+// --- wp-admin Stat Block: opinions render per PC on an NPC and save through
+// the per-PC gate; a PC's edit screen shows no opinions at all. ---
+$GLOBALS['chr_test_is_gm'] = true;
+$GLOBALS['chr_test_can_edit'] = true;
+unset($GLOBALS['chr_test_can_edit_posts']);
+ob_start();
+chronicler_sheets_render_stat_block_box($post);
+$admin_op_gm = ob_get_clean();
+check('admin opinions GM: per-PC rows render', strpos($admin_op_gm, 'Alec’s Opinion') !== false && strpos($admin_op_gm, 'Sam’s Opinion') !== false);
+check('admin opinions GM: rating input addressed by pc', strpos($admin_op_gm, 'chr_stat[opinions][21][rating]') !== false);
+check('admin opinions GM: present-flag rendered', strpos($admin_op_gm, 'chr_stat_present[opinions]') !== false);
+
+unset($GLOBALS['chr_test_post_meta'][7]['chr_npc']);
+ob_start();
+chronicler_sheets_render_stat_block_box($post);
+$admin_op_pc = ob_get_clean();
+check('admin opinions on a PC: no rows, no present-flag', strpos($admin_op_pc, 'chr_stat[opinions]') === false && strpos($admin_op_pc, 'chr_stat_present[opinions]') === false);
+check('admin opinions on a PC: the emptied section leaves no header', strpos($admin_op_pc, 'Opinions') === false);
+$GLOBALS['chr_test_post_meta'][7]['chr_npc'] = '1';
+
+// Save: a non-GM writes only sets whose PC they can edit; forged rows for
+// unknown ids are dropped; the generic value path is never touched.
+$_POST['chronicler_stat_block_nonce'] = 'ok';
+$_POST['chr_stat_present'] = ['opinions' => '1'];
+$_POST['chr_stat'] = ['opinions' => [
+    '21' => ['rating' => '3', 'notes' => 'mine'],
+    '22' => ['rating' => '1', 'notes' => 'FORGED'],
+    '99' => ['rating' => '1', 'notes' => 'GHOST'],
+]];
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = true; // can edit the NPC (its author), still not a GM
+$GLOBALS['chr_test_can_edit_posts'] = [21 => true, 22 => false];
+$GLOBALS['chr_saved_opinions'] = [];
+$GLOBALS['chr_saved'] = [];
+chronicler_sheets_save_stat_block(7);
+check('admin save: own set written', in_array(['opinions', 21], $GLOBALS['chr_saved_opinions'], true));
+check("admin save: another player's set NOT written", !in_array(['opinions', 22], $GLOBALS['chr_saved_opinions'], true));
+check('admin save: an unknown pc row dropped', !in_array(['opinions', 99], $GLOBALS['chr_saved_opinions'], true));
+check('admin save: opinions never reach the whole-property path', !in_array('opinions', $GLOBALS['chr_saved'], true));
+
+$GLOBALS['chr_test_is_gm'] = true;
+unset($GLOBALS['chr_test_can_edit_posts']);
+$GLOBALS['chr_saved_opinions'] = [];
+chronicler_sheets_save_stat_block(7);
+check('admin save GM: every real set written', in_array(['opinions', 21], $GLOBALS['chr_saved_opinions'], true) && in_array(['opinions', 22], $GLOBALS['chr_saved_opinions'], true));
+unset($_POST['chronicler_stat_block_nonce'], $_POST['chr_stat_present'], $_POST['chr_stat']);
+
+unset(
+    $GLOBALS['chr_test_post_meta'][7],
+    $GLOBALS['chr_test_pcs'],
+    $GLOBALS['chr_test_titles'],
+    $GLOBALS['chr_test_opinions'],
+    $GLOBALS['chr_test_user_caps'],
+    $GLOBALS['chr_test_can_edit_posts'],
+    $GLOBALS['chr_saved_opinions']
+);

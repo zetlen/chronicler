@@ -68,6 +68,13 @@ function chronicler_sheets_register_property_meta(): void {
         'select' => 'string', 'text' => 'string', 'longtext' => 'string',
     ];
     foreach ($template['properties'] as $id => $property) {
+        // Opinions (#183) never store under the property's own key — each
+        // set lives in a per-PC row (chronicler_sheets_opinion_meta_key),
+        // and those keys are dynamic (one per player character), so there
+        // is nothing meaningful to declare here.
+        if ($property['type'] === 'opinions') {
+            continue;
+        }
         register_post_meta('chr_character', 'chr_prop_' . $id, [
             'single' => true,
             'type' => $wpTypes[$property['type']],
@@ -104,6 +111,61 @@ function chronicler_sheets_get_detail(int $post_id, array $property): string {
  */
 function chronicler_sheets_is_npc(int $post_id): bool {
     return get_post_meta($post_id, 'chr_npc', true) === '1';
+}
+
+/**
+ * Every published player character's id, in the index's order (menu_order,
+ * then title) — the PCs an opinions property (#183) renders one set for.
+ * Request-memoized: the sheet render, REST serializer, and Stat Block box
+ * may each ask during one request.
+ */
+function chronicler_sheets_player_characters(): array {
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+    $ids = get_posts([
+        'post_type' => 'chr_character',
+        'post_status' => 'publish',
+        'numberposts' => -1,
+        'orderby' => ['menu_order' => 'ASC', 'title' => 'ASC'],
+        'fields' => 'ids',
+    ]);
+    if ($ids !== []) {
+        // fields=>'ids' skips cache priming; warm once so the chr_npc reads
+        // below (and the per-PC opinion reads that follow) don't each query.
+        update_meta_cache('post', $ids);
+    }
+    return $cached = array_values(array_filter(array_map('intval', $ids), function ($id) {
+        return !chronicler_sheets_is_npc($id);
+    }));
+}
+
+/**
+ * Meta key for one PC's opinion set on this character (#183). The double
+ * separator keeps property ids (which may themselves contain underscores)
+ * from colliding with the pc suffix.
+ */
+function chronicler_sheets_opinion_meta_key(string $prop_id, int $pc_id): string {
+    return 'chr_prop_' . $prop_id . '__pc_' . $pc_id;
+}
+
+/** One PC's stored opinion set, normalized ({rating, notes}); defaults when unset. */
+function chronicler_sheets_get_opinion(int $post_id, array $property, int $pc_id): array {
+    $raw = get_post_meta($post_id, chronicler_sheets_opinion_meta_key($property['id'], $pc_id), true);
+    return chronicler_sheets_normalize_opinion($property, $raw);
+}
+
+/**
+ * Store one PC's opinion set whole. One meta row per set, so two players
+ * writing opinions on the same NPC mid-session never clobber each other.
+ */
+function chronicler_sheets_set_opinion(int $post_id, array $property, int $pc_id, array $set): void {
+    update_post_meta(
+        $post_id,
+        chronicler_sheets_opinion_meta_key($property['id'], $pc_id),
+        chronicler_sheets_normalize_opinion($property, $set)
+    );
 }
 
 function chronicler_sheets_activate(): void {
@@ -200,6 +262,16 @@ function chronicler_sheets_get_value(int $post_id, array $property) {
     if (isset($property['derived'])) {
         $derived = chronicler_sheets_derived_values($post_id);
         return $derived[$property['id']] ?? chronicler_sheets_default_value($property);
+    }
+    // Opinions (#183) assemble from their per-PC rows: the full, UNFILTERED
+    // pc id => set map. Audience filtering (the table gate, `private`) is the
+    // render/REST surfaces' job, exactly like the other audience flags.
+    if ($property['type'] === 'opinions') {
+        $sets = [];
+        foreach (chronicler_sheets_player_characters() as $pc_id) {
+            $sets[$pc_id] = chronicler_sheets_get_opinion($post_id, $property, $pc_id);
+        }
+        return $sets;
     }
     $raw = get_post_meta($post_id, 'chr_prop_' . $property['id'], true);
     if ($raw === '' || $raw === false || $raw === null) {

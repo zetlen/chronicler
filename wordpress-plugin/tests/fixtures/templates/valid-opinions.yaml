@@ -1,0 +1,25 @@
+# Per-PC opinion boxes on NPC pages (#183): an `opinions` property renders one
+# rating-track + notes set per player character, labeled with the PC's name.
+# Each set is a personal notebook — visible and written solely by that PC's
+# own player (and GMs). A template may carry more than one.
+system: Opinions Demo
+version: 1
+properties:
+  - id: str
+    label: Strength
+    type: number
+    min: 0
+    max: 5
+  - id: opinions
+    label: Opinion
+    type: opinions
+    length: 6
+  - id: whispers
+    label: Private Read
+    type: opinions
+    length: 4
+layout:
+  - section: Stats
+    properties: [str]
+  - section: Opinions
+    properties: [opinions, whispers]

@@ -155,3 +155,21 @@
 .chr-list-row .chr-field:first-of-type input {
   font-weight: 600;
 }
+
+/* Per-PC opinion sets (#183): one bordered row per player character, the
+   same visual rhythm as list entries. */
+.chr-stat--opinions .chr-opinion-row {
+  border: 1px solid #dcdcde;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0;
+}
+
+.chr-stat--opinions .chr-opinion-row legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.chr-stat--opinions .chr-opinion-row textarea {
+  margin-top: 6px;
+}

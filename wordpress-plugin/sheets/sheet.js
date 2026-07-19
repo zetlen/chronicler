@@ -29,7 +29,22 @@ export function opForControl(el) {
 
 function renderValue(prop, value, display) {
   const type = prop.dataset.type;
-  if (type === "track") {
+  if (type === "opinions") {
+    // One PC's set ({rating, notes}), possibly partial: the optimistic
+    // update sends {rating} alone, reconciles send the whole set. Only
+    // editable markup reconciles — a static (someone else's) set has no
+    // controls and refreshes with the page.
+    const set = value && typeof value === "object" ? value : {};
+    if (typeof set.rating === "number") {
+      prop.querySelectorAll(".chr-track__box[data-index]").forEach((box, i) => {
+        box.setAttribute("aria-pressed", i < set.rating ? "true" : "false");
+      });
+    }
+    if (typeof set.notes === "string") {
+      const input = prop.querySelector(".chr-opinion__notes");
+      if (input && document.activeElement !== input) input.value = set.notes;
+    }
+  } else if (type === "track") {
     const boxes = prop.querySelectorAll(".chr-track__box[data-index]");
     if (boxes.length > 0) {
       boxes.forEach((box, i) => {
@@ -76,7 +91,9 @@ export function initSheet(root, fetchImpl = fetch) {
   } catch {
     return; // malformed boot payload — leave the sheet as server-rendered
   }
-  if (!boot.canEdit) return;
+  // canEdit covers the whole sheet; canOpine (#183) covers just the viewer's
+  // own opinion sets on an NPC page — either is reason to wire controls.
+  if (!boot.canEdit && !boot.canOpine) return;
   const errorBox = root.querySelector(".chr-sheet__error");
 
   const call = (path, init = {}) =>
@@ -91,17 +108,29 @@ export function initSheet(root, fetchImpl = fetch) {
     if (!res.ok) return;
     const sheet = await res.json();
     for (const p of sheet.properties) {
+      // Opinions (#183) arrive as a pc-id → set map; each set reconciles
+      // its own [data-prop][data-pc] block.
+      if (p.type === "opinions") {
+        for (const [pc, set] of Object.entries(p.value || {})) {
+          const el = root.querySelector(`[data-prop="${p.id}"][data-pc="${pc}"]`);
+          if (el) renderValue(el, set, `${set.rating}/${el.dataset.length}`);
+        }
+        continue;
+      }
       const el = root.querySelector(`[data-prop="${p.id}"]`);
       if (el) renderValue(el, p.value, p.display);
     }
   };
 
-  const send = async (prop, op, value) => {
+  const send = async (prop, op, value, field) => {
     errorBox.hidden = true;
     try {
-      const res = await call(`/properties/${prop.dataset.prop}`, {
+      // An opinion set (data-pc) writes one field of one PC's set through
+      // the opinions route; everything else stays on the properties route.
+      const pc = prop.dataset.pc;
+      const res = await call(pc ? `/opinions/${prop.dataset.prop}` : `/properties/${prop.dataset.prop}`, {
         method: "POST",
-        body: JSON.stringify({ op, value }),
+        body: JSON.stringify(pc ? { pc: Number(pc), field, op, value } : { op, value }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.message || "The change was rejected.");
@@ -123,8 +152,12 @@ export function initSheet(root, fetchImpl = fetch) {
     const prop = el.closest(".chr-prop");
     const intent = prop && opForControl(el);
     if (!intent) return;
+    // Inside an opinion set the control itself names the field: the track
+    // boxes are the rating, the textarea is the notes.
+    const field = prop.dataset.pc ? (el.matches(".chr-track__box") ? "rating" : "notes") : undefined;
     if (prop.dataset.type === "track") renderValue(prop, intent.value); // optimistic
-    void send(prop, intent.op, intent.value);
+    if (field === "rating") renderValue(prop, { rating: intent.value }); // optimistic
+    void send(prop, intent.op, intent.value, field);
   };
 
   root.addEventListener("click", (e) => {

@@ -7,7 +7,7 @@ if (!defined('ABSPATH') && !defined('CHRONICLER_TESTS')) {
     exit;
 }
 
-const CHRONICLER_SHEETS_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text', 'longtext', 'list'];
+const CHRONICLER_SHEETS_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text', 'longtext', 'list', 'opinions'];
 const CHRONICLER_SHEETS_LIST_FIELD_TYPES = ['text', 'longtext', 'number', 'toggle', 'select'];
 const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 
@@ -167,6 +167,28 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
             // is exactly what the write path would have enforced at save time.
             $prop['live'] = false;
         }
+        // Opinions (#183) are per-player-character by construction: each set is
+        // a personal notebook — read and written by ITS PC's owning player (and
+        // GMs) — so the property-wide write flag and audience flags contradict
+        // the type. `live` would say "whoever can edit this character may
+        // write" (the per-set gate is per-PC instead), and gm_only/owner_only
+        // would gate on the SUBJECT character's editors when each set already
+        // carries its own audience. Refuse the combinations on the write path;
+        // a lenient read degrades the way each flag's own polarity demands:
+        // live is dropped (never widen writes), the audience flags are KEPT
+        // (the generic gates then hide the sets from more viewers than intended
+        // — hidden beats leaked, same reasoning as owner_only above).
+        if ($type === 'opinions' && ($prop['live'] ?? false)) {
+            if (!$lenient) {
+                return new WP_Error('chronicler_invalid_template', "Property \"$id\": opinions are always editable by each player character's own player — no \"live\" flag needed.");
+            }
+            $prop['live'] = false;
+        }
+        if ($type === 'opinions' && (($prop['gm_only'] ?? false) || !empty($prop['owner_only']))) {
+            if (!$lenient) {
+                return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"gm_only\"/\"owner_only\" don't apply to opinions — each player's set is already private to them and the GM.");
+            }
+        }
         // "always_show" keeps a property on the sheet even with nothing filled
         // in (e.g. Player Notes, GM Notes) — see chronicler_sheets_is_unfilled().
         if (isset($prop['always_show']) && !is_bool($prop['always_show'])) {
@@ -309,8 +331,8 @@ function chronicler_sheets_check_constraints(string $id, string $type, array $pr
             return new WP_Error('chronicler_invalid_template', "Property \"$id\": min exceeds max.");
         }
     }
-    if ($type === 'track' && (!is_int($prop['length'] ?? null) || $prop['length'] < 1)) {
-        return new WP_Error('chronicler_invalid_template', "Property \"$id\": track needs a positive integer \"length\".");
+    if (($type === 'track' || $type === 'opinions') && (!is_int($prop['length'] ?? null) || $prop['length'] < 1)) {
+        return new WP_Error('chronicler_invalid_template', "Property \"$id\": $type needs a positive integer \"length\".");
     }
     if ($type === 'counter' && (!$intOrNull('max') || !$intOrNull('start'))) {
         return new WP_Error('chronicler_invalid_template', "Property \"$id\": counter max/start must be integers.");
@@ -436,6 +458,20 @@ function chronicler_sheets_is_owner_only(array $property): bool {
 }
 
 /**
+ * One player character's stored opinion set (#183), normalized: rating an int
+ * clamped to the property's track bounds, notes a string. Tolerates any raw
+ * shape (missing meta, junk) so every read surface agrees on the fallback.
+ */
+function chronicler_sheets_normalize_opinion(array $property, $raw): array {
+    $set = is_array($raw) ? $raw : [];
+    $rating = chronicler_sheets_to_int($set['rating'] ?? 0) ?? 0;
+    return [
+        'rating' => chronicler_sheets_clamp($rating, 0, $property['length']),
+        'notes' => is_string($set['notes'] ?? null) ? $set['notes'] : '',
+    ];
+}
+
+/**
  * Whether a property always renders even when unfilled (chronicler_sheets_is_unfilled),
  * instead of being dropped from the sheet as a blank row — e.g. Player Notes
  * and GM Notes, which should read as an empty prompt rather than vanish.
@@ -468,6 +504,8 @@ function chronicler_sheets_default_value(array $property) {
             return [];
         case 'list':
             return [];
+        case 'opinions':
+            return []; // pc id => set; sets materialize as players write them
         default: // text, longtext
             return '';
     }
@@ -575,6 +613,13 @@ function chronicler_sheets_apply_op(array $property, $current, string $op, $valu
     // one. This central gate covers REST ops and the Stat Block save.
     if (isset($property['derived'])) {
         return $bad('is computed from a formula and cannot be edited directly.');
+    }
+
+    // Opinions (#183) are written one PC's set at a time, each behind its own
+    // per-PC permission — never as one whole-property value through this
+    // generic path. The opinions endpoint and Stat Block save handle them.
+    if ($type === 'opinions') {
+        return $bad('is recorded per player character — edit each opinion on the page itself.');
     }
 
     if (!in_array($op, ['set', 'adjust', 'toggle'], true)) {
@@ -725,6 +770,15 @@ function chronicler_sheets_display_value(array $property, $value): string {
         case 'list':
             $n = count((array) $value);
             return $n === 1 ? '1 entry' : $n . ' entries';
+        case 'opinions':
+            $filled = 0;
+            foreach ((array) $value as $set) {
+                $set = chronicler_sheets_normalize_opinion($property, $set);
+                if ($set['rating'] > 0 || trim($set['notes']) !== '') {
+                    $filled++;
+                }
+            }
+            return $filled === 1 ? '1 opinion' : $filled . ' opinions';
         default:
             return (string) $value;
     }

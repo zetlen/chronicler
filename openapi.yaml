@@ -497,7 +497,12 @@ paths:
         caller holds `edit_others_chr_characters`, owner-only properties
         are omitted unless the caller can `edit_post` this character (its
         author or a GM), and `canEdit` reflects the caller's `edit_post`
-        right on the character.
+        right on the character. An `opinions` property (#183) appears only
+        on NPCs, and each set is its player's personal notebook: the
+        `value` map (PC id to `{rating, notes}`) contains only sets for
+        PCs the caller can `edit_post` — their own characters — while a
+        GM receives every set. A `pcs` array names each served set and
+        carries the caller's per-PC write right.
       security:
         - {}
         - basicAuth: []
@@ -580,6 +585,71 @@ paths:
             No such character, no sheet template configured, or the sheet
             has no such property (`chronicler_not_found` /
             `chronicler_no_template` / `chronicler_no_property`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /characters/{id}/opinions/{prop}:
+    post:
+      tags: [sheets]
+      operationId: updateOpinion
+      summary: Write one field of one PC's opinion set on an NPC
+      description: |
+        Applies `{op, value}` to one field (`rating` or `notes`) of one
+        player character's opinion set on an NPC page (#183). The
+        permission inverts the properties route: it requires the WordPress
+        `edit_post` capability on the PLAYER CHARACTER named by `pc` — its
+        owning player or a GM — not on the target character, since a
+        player writing their opinion of an NPC holds no rights on the NPC
+        itself. The rating obeys track semantics (`set`/`adjust`, clamped
+        to 0..the property's `length`); notes obey text semantics (`set`,
+        sanitized to plain multi-line text). The target must be an NPC
+        carrying an `opinions` property; `pc` must be a published,
+        non-NPC character.
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: prop
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpinionWrite"
+      responses:
+        "200":
+          description: The stored set after the op.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpinionResult"
+        "400":
+          description: Body missing `op` or a valid `field` (`chronicler_bad_request`), or a value the field refuses (`chronicler_bad_value`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            Authenticated but cannot `edit_post` the player character
+            whose set this is (`rest_forbidden` from the route gate, or
+            `chronicler_forbidden` from the handler's backstop).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: |
+            No such character, no template, no such opinions property, the
+            target is not an NPC (`chronicler_no_property`), or `pc` is
+            not a published player character (`chronicler_no_pc`).
           content:
             application/json:
               schema:
@@ -1184,6 +1254,51 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DerivedValue"
+      additionalProperties: false
+
+    OpinionWrite:
+      type: object
+      description: |
+        One write to one field of one PC's opinion set. `rating` accepts
+        `set`/`adjust` with a whole number (clamped to 0..`length`);
+        `notes` accepts `set` with a string (sanitized to plain text).
+      properties:
+        pc:
+          type: integer
+          description: The player character whose set this is — the permission subject.
+        field:
+          type: string
+          enum: [rating, notes]
+        op:
+          type: string
+          enum: [set, adjust]
+        value:
+          description: The operand; a whole number for rating, a string for notes.
+      required: [pc, field, op]
+
+    OpinionResult:
+      type: object
+      description: The stored opinion set after the op.
+      properties:
+        prop:
+          type: string
+        pc:
+          type: integer
+        value:
+          $ref: "#/components/schemas/OpinionSet"
+        display:
+          type: string
+          description: rating/length, e.g. "2/6".
+      additionalProperties: false
+
+    OpinionSet:
+      type: object
+      description: One player character's opinion of this NPC.
+      properties:
+        rating:
+          type: integer
+        notes:
+          type: string
       additionalProperties: false
 
     DerivedValue:

@@ -421,14 +421,24 @@ function chronicler_sheets_render_stat_block_box(WP_Post $post): void {
     wp_nonce_field('chronicler_stat_block', 'chronicler_stat_block_nonce');
     echo '<div class="chr-stat-block">';
     foreach (chronicler_sheets_layout_sections($template) as $section) {
-        $properties = $is_gm ? $section['properties'] : array_values(array_filter(
+        $properties = array_values(array_filter(
             $section['properties'],
-            function ($id) use ($template) {
-                return !chronicler_sheets_is_gm_only($template['properties'][$id]);
+            function ($id) use ($template, $is_gm, $post) {
+                $property = $template['properties'][$id];
+                if (!$is_gm && chronicler_sheets_is_gm_only($property)) {
+                    return false;
+                }
+                // Opinions (#183) exist on NPC pages only — a PC's edit
+                // screen has no sets to edit, so the property (and a section
+                // it would leave empty) drops here like the front end.
+                if ($property['type'] === 'opinions' && !chronicler_sheets_is_npc($post->ID)) {
+                    return false;
+                }
+                return true;
             }
         ));
         if ($properties === []) {
-            continue; // a section emptied by the GM-only filter leaves no header
+            continue; // a section emptied by the filters above leaves no header
         }
         echo '<fieldset class="chr-stat-section">';
         echo '<legend class="chr-stat-section__title">' . esc_html($section['section']) . '</legend>';
@@ -444,6 +454,35 @@ function chronicler_sheets_render_stat_block_box(WP_Post $post): void {
                 echo '<span class="chr-stat__label">' . esc_html($property['label']) . '</span>';
                 echo '<strong>' . esc_html(chronicler_sheets_display_value($property, $value)) . '</strong>';
                 echo '<p class="description">Computed: <code>' . esc_html($property['derived']) . '</code></p>';
+                echo '</div>';
+                continue;
+            }
+            // Opinions (#183): one rating + notes group per PC. The sets and
+            // their editability come from the same visibility authority as
+            // the front end; a set the viewer can't write renders disabled
+            // (disabled inputs post nothing, so the save leaves it alone —
+            // and the save re-checks the per-PC gate regardless).
+            if ($property['type'] === 'opinions') {
+                $sets = chronicler_sheets_visible_opinion_sets($post->ID, $property);
+                if ($sets === null || $sets === []) {
+                    continue;
+                }
+                echo '<div class="chr-stat chr-stat--opinions">';
+                echo '<span class="chr-stat__label">' . esc_html($property['label']) . '</span>';
+                echo '<input type="hidden" name="chr_stat_present[' . esc_attr($id) . ']" value="1">';
+                foreach ($sets as $set) {
+                    $row = 'chr_stat[' . esc_attr($id) . '][' . (int) $set['pc'] . ']';
+                    $disabled = $set['canEdit'] ? '' : ' disabled';
+                    echo '<fieldset class="chr-opinion-row">';
+                    echo '<legend>' . esc_html($set['name'] . '’s ' . $property['label']) . '</legend>';
+                    echo '<label>Rating <input type="number" class="chr-input--number" name="' . $row . '[rating]" value="'
+                        . (int) $set['value']['rating'] . '" min="0" max="' . (int) $property['length'] . '"' . $disabled . '>'
+                        . ' <span class="description">of ' . (int) $property['length'] . '</span></label>';
+                    echo '<textarea name="' . $row . '[notes]" rows="2" class="widefat" placeholder="Notes"' . $disabled . '>'
+                        . esc_textarea($set['value']['notes']) . '</textarea>';
+                    echo '</fieldset>';
+                }
+                echo '<p class="description">One private set per player character — each player\'s personal notebook, written from the page itself and visible only to them and the GM. Editing here is the GM override.</p>';
                 echo '</div>';
                 continue;
             }
@@ -603,6 +642,29 @@ function chronicler_sheets_save_stat_block(int $post_id): void {
         // fields for a non-GM, so a forged flag is the only way one arrives here.
         // Enforce the same audience gate on save that the box does on render.
         if (chronicler_sheets_is_gm_only($property) && !current_user_can('edit_others_chr_characters')) {
+            continue;
+        }
+        // Opinions (#183) bypass the whole-property path: each posted set is
+        // written on its own, behind the same per-PC edit_post gate the REST
+        // route enforces — the box renders un-writable sets disabled, but a
+        // forged row must not get past that. Unknown/NPC pc ids are dropped;
+        // non-NPC characters have no sets to write at all.
+        if ($property['type'] === 'opinions') {
+            $raw = $submitted[$id] ?? null;
+            if (!is_array($raw) || !chronicler_sheets_is_npc($post_id)) {
+                continue;
+            }
+            $pcs = array_flip(chronicler_sheets_player_characters());
+            foreach ($raw as $pc_id => $set) {
+                $pc_id = (int) $pc_id;
+                if (!isset($pcs[$pc_id]) || !is_array($set) || !current_user_can('edit_post', $pc_id)) {
+                    continue;
+                }
+                chronicler_sheets_set_opinion($post_id, $property, $pc_id, [
+                    'rating' => (int) ($set['rating'] ?? 0),
+                    'notes' => sanitize_textarea_field((string) ($set['notes'] ?? '')),
+                ]);
+            }
             continue;
         }
         $raw = $submitted[$id] ?? ($property['type'] === 'checklist' || $property['type'] === 'list' ? [] : null);

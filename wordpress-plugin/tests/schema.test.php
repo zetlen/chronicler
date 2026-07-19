@@ -620,3 +620,58 @@ check('bare-scalar YAML is an error', is_wp_error(chronicler_sheets_parse_templa
 
 // The existing JSON path is untouched.
 check('JSON template still parses', is_array(chronicler_sheets_parse_template($motw)));
+
+// --- #183: the opinions type (per-PC opinion sets on NPC pages) --------------
+$chr_opinions_tpl = function (array $overrides = []) {
+    return json_encode([
+        'system' => 'Test', 'version' => 1,
+        'properties' => [
+            array_merge(['id' => 'opinions', 'label' => 'Opinion', 'type' => 'opinions', 'length' => 6], $overrides),
+        ],
+    ]);
+};
+
+$po = chronicler_sheets_parse_template($chr_opinions_tpl());
+check('opinions property parses', is_array($po), is_wp_error($po) ? $po->get_error_message() : '');
+check('opinions needs a length', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['length' => null]))));
+check('opinions length must be positive', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['length' => 0]))));
+
+// Opinions are per-PC by construction; the whole-property write flag and the
+// audience flags contradict the type and fail the write path.
+check('opinions + live is rejected on the write path', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['live' => true]))));
+check('opinions + gm_only is rejected', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['gm_only' => true]))));
+check('opinions + owner_only is rejected', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['owner_only' => true]))));
+
+// Lenient (#140): live is DROPPED (never widen writes); the audience flags
+// are KEPT so the generic gates hide the sets — hidden beats leaked.
+$po_lenient = chronicler_sheets_parse_template($chr_opinions_tpl(['live' => true]), true);
+check('lenient: opinions live flag dropped', is_array($po_lenient) && $po_lenient['properties']['opinions']['live'] === false);
+$po_lenient_gm = chronicler_sheets_parse_template($chr_opinions_tpl(['gm_only' => true]), true);
+check('lenient: opinions gm_only kept (fail closed)', is_array($po_lenient_gm) && chronicler_sheets_is_gm_only($po_lenient_gm['properties']['opinions']));
+
+// There is no `private` knob: each set is private by construction (a
+// player's personal notebook), so the key is unknown and fails the write
+// path like any typo would.
+check('a private key on opinions is rejected as unknown', is_wp_error(chronicler_sheets_parse_template($chr_opinions_tpl(['private' => true]))));
+
+// Value plumbing: default, normalization, display, and the generic-write refusal.
+$chr_op_prop = is_array($po) ? $po['properties']['opinions'] : null;
+check('opinions default value is an empty map', $chr_op_prop !== null && chronicler_sheets_default_value($chr_op_prop) === []);
+check(
+    'normalize clamps rating to the track bounds and defaults notes',
+    $chr_op_prop !== null
+        && chronicler_sheets_normalize_opinion($chr_op_prop, ['rating' => 99]) === ['rating' => 6, 'notes' => '']
+        && chronicler_sheets_normalize_opinion($chr_op_prop, null) === ['rating' => 0, 'notes' => '']
+        && chronicler_sheets_normalize_opinion($chr_op_prop, ['rating' => '3', 'notes' => 'wary']) === ['rating' => 3, 'notes' => 'wary']
+);
+check(
+    'opinions display counts filled sets only',
+    $chr_op_prop !== null
+        && chronicler_sheets_display_value($chr_op_prop, [
+            21 => ['rating' => 2, 'notes' => ''],
+            22 => ['rating' => 0, 'notes' => 'shifty'],
+            23 => ['rating' => 0, 'notes' => ''],
+        ]) === '2 opinions'
+);
+$chr_op_write = $chr_op_prop === null ? null : chronicler_sheets_apply_op($chr_op_prop, [], 'set', []);
+check('generic apply_op refuses opinions', is_wp_error($chr_op_write));

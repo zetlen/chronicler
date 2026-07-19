@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.20.2
+Stable tag: 4.21.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.21.0 =
+* Per-PC opinion boxes on NPC pages (#183): a new `opinions` sheet-property type renders one rating-circles + notes set per player character on each NPC page, labeled with the PC's name. Each set is that player's private notebook — visible only to them and the GM, live-editable right on the page without wp-admin. GMs see and can edit every set, including from the Stat Block editor.
 
 = 4.20.2 =
 * Sheet editor polish from the 2026-07-14 playtest: field labels in the Stat Block editor no longer word-wrap, and the example Game System template's gear list now models the recommended shape — a "Description" field (instead of "Effect") and a Tags field on every item, not just weapons.

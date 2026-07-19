@@ -175,3 +175,128 @@ describe("initSheet", () => {
     );
   });
 });
+
+describe("initSheet — opinions (#183)", () => {
+  function opinionDom(
+    boot: Record<string, unknown> = {
+      restUrl: "https://blog.test/wp-json/chronicler/v1/",
+      nonce: "n0nce",
+      canEdit: false,
+      canOpine: true,
+      characterId: 9,
+    },
+  ) {
+    const box = (i: number, pressed: boolean) =>
+      `<button type="button" class="chr-track__box" data-index="${i}" aria-pressed="${pressed}"></button>`;
+    document.body.innerHTML = `
+      <article class="chr-sheet" data-chronicler-sheet>
+        <script type="application/json" id="chronicler-sheet-boot">${JSON.stringify(boot)}</script>
+        <div class="chr-sheet__error" hidden></div>
+        <div class="chr-prop chr-opinion" data-prop="opinions" data-pc="21" data-type="opinions" data-length="6">
+          <span class="chr-prop__label">Alec’s Opinion</span>
+          <span class="chr-track">${[0, 1, 2, 3, 4, 5].map((i) => box(i, i < 2)).join("")}</span>
+          <span class="chr-prop__display">2/6</span>
+          <textarea class="chr-longtext chr-opinion__notes">shifty</textarea>
+        </div>
+        <div class="chr-prop chr-opinion" data-prop="opinions" data-pc="22" data-type="opinions" data-length="6">
+          <span class="chr-prop__label">Sam’s Opinion</span>
+          <span class="chr-prop__static">
+            <span class="chr-track__box" aria-hidden="true" data-marked="1"></span>
+            <span class="chr-track__box" aria-hidden="true" data-marked="0"></span>
+          </span>
+          <span class="chr-prop__display">1/6</span>
+        </div>
+      </article>`;
+    return document.querySelector("[data-chronicler-sheet]") as HTMLElement;
+  }
+
+  it("activates on canOpine alone and posts a rating click to the opinions route", async () => {
+    const root = opinionDom();
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ prop: "opinions", pc: 21, value: { rating: 4, notes: "shifty" }, display: "4/6" }),
+    );
+    initSheet(root, fetchMock);
+
+    (root.querySelectorAll('[data-pc="21"] .chr-track__box')[3] as HTMLElement).click();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://blog.test/wp-json/chronicler/v1/characters/9/opinions/opinions");
+    expect(JSON.parse(String(init.body))).toEqual({ pc: 21, field: "rating", op: "set", value: 4 });
+    await vi.waitFor(() =>
+      expect(root.querySelector('[data-pc="21"] .chr-prop__display')!.textContent).toBe("4/6"),
+    );
+    expect(
+      root.querySelectorAll('[data-pc="21"] .chr-track__box[aria-pressed="true"]').length,
+    ).toBe(4);
+  });
+
+  it("posts a notes change as the notes field of the same set", async () => {
+    const root = opinionDom();
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ prop: "opinions", pc: 21, value: { rating: 2, notes: "reformed" }, display: "2/6" }),
+    );
+    initSheet(root, fetchMock);
+
+    const notes = root.querySelector('[data-pc="21"] .chr-opinion__notes') as HTMLTextAreaElement;
+    notes.value = "reformed";
+    notes.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+      pc: 21,
+      field: "notes",
+      op: "set",
+      value: "reformed",
+    });
+  });
+
+  it("stays inert when the viewer can neither edit nor opine", () => {
+    const root = opinionDom({
+      restUrl: "https://blog.test/wp-json/chronicler/v1/",
+      nonce: "n0nce",
+      canEdit: false,
+      canOpine: false,
+      characterId: 9,
+    });
+    const fetchMock = vi.fn();
+    initSheet(root, fetchMock);
+    (root.querySelectorAll('[data-pc="21"] .chr-track__box')[3] as HTMLElement).click();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("re-syncs each set by pc after a rejected write", async () => {
+    const root = opinionDom();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ code: "chronicler_forbidden", message: "Not your pen." }, 403))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          characterId: 9,
+          properties: [
+            {
+              id: "opinions",
+              type: "opinions",
+              value: { "21": { rating: 1, notes: "server truth" }, "22": { rating: 5, notes: "hidden" } },
+            },
+          ],
+        }),
+      );
+    initSheet(root, fetchMock);
+
+    (root.querySelectorAll('[data-pc="21"] .chr-track__box')[3] as HTMLElement).click();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const error = root.querySelector(".chr-sheet__error") as HTMLElement;
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("Not your pen");
+    // The editable set reconciled to the server's truth…
+    expect(
+      root.querySelectorAll('[data-pc="21"] .chr-track__box[aria-pressed="true"]').length,
+    ).toBe(1);
+    expect((root.querySelector('[data-pc="21"] .chr-opinion__notes') as HTMLTextAreaElement).value).toBe("server truth");
+    expect(root.querySelector('[data-pc="21"] .chr-prop__display')!.textContent).toBe("1/6");
+    // …and the static set's markup was left alone (it has no controls).
+    expect(
+      root.querySelectorAll('[data-pc="22"] .chr-track__box[data-marked="1"]').length,
+    ).toBe(1);
+  });
+});

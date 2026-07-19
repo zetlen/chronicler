@@ -88,11 +88,12 @@ describe("gameSystemCompletion — formula context", () => {
 });
 
 describe("gameSystemCompletion — type values", () => {
-  it("offers all nine property types with per-type docs", () => {
+  it("offers all ten property types with per-type docs", () => {
     const result = completeAt(after("type: number") - "umber".length);
     const labels = result!.options.map((o) => o.label);
-    expect(labels).toHaveLength(9);
+    expect(labels).toHaveLength(10);
     expect(labels).toContain("track");
+    expect(labels).toContain("opinions");
     const track = result!.options.find((o) => o.label === "track")!;
     const info = (track.info as () => HTMLElement)();
     expect(info.textContent).toMatch(/track|boxes/i);
