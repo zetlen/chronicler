@@ -77,11 +77,26 @@
     var gen = genState[0];
     var setGen = genState[1];
 
+    // GET /sessions is paginated (#164): accumulate pages until a short one
+    // arrives, so installs past the default page size keep their whole
+    // history in the picker. per_page=200 is the route's max — one round
+    // trip for all but the largest archives. (wp.apiFetch converts the
+    // path's query for plain-permalink roots itself.)
+    function fetchAllSessions(page, acc) {
+      return wp
+        .apiFetch({ path: '/chronicler/v1/sessions?page=' + page + '&per_page=200' })
+        .then(function (sessions) {
+          var batch = Array.isArray(sessions) ? sessions : [];
+          var all = acc.concat(batch);
+          return batch.length === 200 ? fetchAllSessions(page + 1, all) : all;
+        });
+    }
+
     function loadSessions() {
       setList({ kind: 'loading' });
-      wp.apiFetch({ path: '/chronicler/v1/sessions' })
+      fetchAllSessions(1, [])
         .then(function (sessions) {
-          setList({ kind: 'ready', sessions: Array.isArray(sessions) ? sessions : [] });
+          setList({ kind: 'ready', sessions: sessions });
         })
         .catch(function (err) {
           setList({ kind: 'error', message: errorMessage(err) });

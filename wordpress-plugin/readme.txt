@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.16.0
+Stable tag: 4.17.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,15 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.17.0 =
+* Session autosave is sturdier: saves never overlap (so a slow save can no longer overwrite a newer one), a failed save retries on its own with backoff instead of waiting for your next edit, a hung save times out instead of wedging autosave, and navigating away flushes pending edits.
+* The session list is paginated — large installs load the newest 50 with a "Load more" button (which keeps your rows and offers a retry if a page fails) — and the REST route accepts standard page/per_page parameters. The transcript-generation session picker pages through everything.
+* REST calls from the session editor now work on plain-permalink (?rest_route=) installs when they carry query parameters.
+* Transcript blocks moved to Block API v3, ready for WordPress's iframed block editor.
+* Editor scripts now load only on post, page, and reusable-block editors instead of every block-editor screen (filterable via chronicler_editor_post_types); the generation sidebar loads on post editors only.
+* Deactivating the plugin now clears its rewrite rules (network-wide deactivation clears every site), so the /characters URLs no longer linger for other content to trip over.
+* The Plugins screen and Chronicler → Settings now warn that deleting the plugin removes its sessions and character sheets (published transcripts and uploaded media are kept).
 
 = 4.16.0 =
 * Uninstall cleanup: removes the sessions table, options, roles and capabilities (including documented per-user grants), plugin post types in every status, unused Slack mirrors, Slack user mappings, the eviction cron, cached data, and stale rewrite rules — per site on multisite. Media you uploaded and images used by published transcripts are kept.

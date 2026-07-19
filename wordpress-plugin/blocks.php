@@ -26,9 +26,33 @@ require_once __DIR__ . '/message-render.php';
  */
 const CHRONICLER_BLOCKS_VERSION = 4;
 
+/**
+ * The block-editor screens that host transcripts (#164): ordinary posts —
+ * where every transcript is published — plus pages, where one can be
+ * pasted, plus wp_block (the reusable-block/pattern editor is an ordinary
+ * post editor for that CPT, and a transcript saved into one must stay
+ * editable there). The widget/site editors and unrelated CPTs skip the
+ * editor assets; sites hosting transcripts elsewhere can widen the list via
+ * the filter. Front-end render never depends on this — the block
+ * registrations are unconditional.
+ */
+function chronicler_editor_post_types(): array {
+    return (array) apply_filters('chronicler_editor_post_types', ['post', 'page', 'wp_block']);
+}
+
+/** Whether the current admin screen is a block editor for a transcript-hosting post type. */
+function chronicler_is_transcript_editor_screen(): bool {
+    $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+    return $screen !== null
+        && in_array($screen->post_type, chronicler_editor_post_types(), true);
+}
+
 // The editor renders blocks from the same attributes PHP does, so it needs
 // only the block definitions — no stylesheet enqueue anywhere.
 add_action('enqueue_block_editor_assets', function () {
+    if (!chronicler_is_transcript_editor_screen()) {
+        return;
+    }
     wp_enqueue_script(
         'chronicler-blocks',
         plugins_url('editor.js', __FILE__),
@@ -42,8 +66,13 @@ function chronicler_note($text) {
     return $text === '' ? '' : '<div class="slk-thread__note">' . esc_html($text) . '</div>';
 }
 
+// All four transcript blocks are Block API v3 (#164), like the newer
+// character-index and session-placeholder blocks: v3 declares the editor may
+// render them inside its iframed canvas, WordPress's direction of travel.
+// They render server-side from attributes, so nothing else changes.
 add_action('init', function () {
     register_block_type('chronicler/transcript', [
+        'api_version' => 3,
         'attributes' => [
             'scheme' => ['type' => 'string', 'default' => 'light'],
             'density' => ['type' => 'string', 'default' => 'comfortable'],
@@ -120,6 +149,7 @@ add_action('init', function () {
     ]);
 
     register_block_type('chronicler/thread', [
+        'api_version' => 3,
         'attributes' => [
             'context' => ['type' => 'boolean', 'default' => false],
             'contextNote' => ['type' => 'string', 'default' => ''],
@@ -134,6 +164,7 @@ add_action('init', function () {
     ]);
 
     register_block_type('chronicler/replies', [
+        'api_version' => 3,
         'attributes' => [
             'beforeNote' => ['type' => 'string', 'default' => ''],
             'afterNote' => ['type' => 'string', 'default' => ''],
@@ -151,6 +182,7 @@ add_action('init', function () {
     // the system-message path. className must be registered explicitly —
     // render callbacks only receive registered attributes.
     register_block_type('chronicler/message', [
+        'api_version' => 3,
         'attributes' => [
             'html' => ['type' => 'string', 'default' => ''],
             'rootClass' => ['type' => 'string', 'default' => ''],

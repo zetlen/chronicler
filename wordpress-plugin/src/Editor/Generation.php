@@ -114,9 +114,16 @@ final class Generation
     }
 
     /** The sidebar registers a wp.plugins plugin, not a block: it must be
-     *  enqueued explicitly for every block-editor screen. */
+     *  enqueued explicitly — but only where generation can land (#164).
+     *  Sessions generate into ordinary posts (the pattern's postTypes, the
+     *  deep link's post_type gate), so other CPTs' editors and the
+     *  widget/site editors skip the script; the panel UI already self-hides. */
     public function enqueueSidebar(): void
     {
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if ($screen === null || $screen->post_type !== 'post') {
+            return;
+        }
         wp_enqueue_script(self::SIDEBAR_HANDLE);
     }
 

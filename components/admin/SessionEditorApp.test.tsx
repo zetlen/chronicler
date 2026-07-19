@@ -72,7 +72,8 @@ interface StubRoute {
   method?: string;
   /** Matched against the end of the URL (string) or the whole URL (RegExp). */
   path: string | RegExp;
-  response: StubResponse | ((body: unknown) => StubResponse);
+  /** A promise-returning function models a slow response (#164 overlap tests). */
+  response: StubResponse | ((body: unknown) => StubResponse | Promise<StubResponse>);
 }
 
 interface RecordedCall {
@@ -103,7 +104,7 @@ function stubApi(routes: StubRoute[]) {
     );
     const res: StubResponse = route
       ? typeof route.response === "function"
-        ? route.response(body)
+        ? await route.response(body)
         : route.response
       : {
           status: 404,
@@ -160,6 +161,17 @@ const EDITOR_ROUTES: StubRoute[] = [
   { path: "/rules", response: { status: 200, body: [] } },
 ];
 
+/** GET /sessions carries pagination args since #164. */
+const LIST_PATH = /\/sessions\?page=\d+&per_page=\d+$/;
+
+/** `count` sequential light sessions starting at id `start`. */
+const pageOf = (start: number, count: number): SessionLight[] =>
+  Array.from({ length: count }, (_, i) => ({
+    ...SESSION_LIGHT,
+    id: start + i,
+    channel: { id: `C${start + i}`, name: `chan-${start + i}` },
+  }));
+
 /* ------------------------------------------------------------------ *
  * Mount / list view
  * ------------------------------------------------------------------ */
@@ -169,7 +181,7 @@ describe("mountChroniclerAdmin (entry smoke test)", () => {
     document.body.innerHTML = `<div id="${ROOT_ID}"></div>`;
     bootPage();
     const { calls } = stubApi([
-      { path: "/sessions", response: { status: 200, body: [SESSION_LIGHT] } },
+      { path: LIST_PATH, response: { status: 200, body: [SESSION_LIGHT] } },
     ]);
 
     let root: Root | null = null;
@@ -185,7 +197,7 @@ describe("mountChroniclerAdmin (entry smoke test)", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
 
     // The list load went through apiFetch with the boot nonce.
-    expect(calls[0].url).toBe("/wp-json/chronicler/v1/sessions");
+    expect(calls[0].url).toBe("/wp-json/chronicler/v1/sessions?page=1&per_page=50");
     expect(calls[0].headers.get("X-WP-Nonce")).toBe("test-nonce");
 
     await act(async () => {
@@ -214,7 +226,7 @@ describe("session list", () => {
   it("Edit deep-links the editor via the session query arg", async () => {
     bootPage();
     stubApi([
-      { path: "/sessions", response: { status: 200, body: [SESSION_LIGHT] } },
+      { path: LIST_PATH, response: { status: 200, body: [SESSION_LIGHT] } },
       ...EDITOR_ROUTES,
     ]);
     render(<SessionEditorApp />);
@@ -231,12 +243,68 @@ describe("session list", () => {
     bootPage();
     stubApi([
       {
-        path: "/sessions",
+        path: LIST_PATH,
         response: { status: 403, body: { message: "Sorry, not allowed." } },
       },
     ]);
     render(<SessionEditorApp />);
     await screen.findByText(/Sorry, not allowed\./);
+  });
+
+  it("pages: a full first page offers Load more, which appends page 2 (#164)", async () => {
+    bootPage();
+    const { calls } = stubApi([
+      {
+        path: LIST_PATH,
+        response: () => {
+          const page = calls.filter((c) => LIST_PATH.test(c.url)).length;
+          return {
+            status: 200,
+            body: page === 1 ? pageOf(1, 50) : pageOf(51, 3),
+          };
+        },
+      },
+    ]);
+    render(<SessionEditorApp />);
+    await screen.findByText("#chan-1");
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(50);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByText("#chan-53");
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(53);
+    // A short page means the well is dry: the affordance goes away.
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(calls[1].url).toContain("sessions?page=2&per_page=50");
+  });
+
+  it("keeps loaded rows when Load more fails, and offers an inline retry (#174 review)", async () => {
+    bootPage();
+    let listCalls = 0;
+    stubApi([
+      {
+        path: LIST_PATH,
+        response: () => {
+          listCalls += 1;
+          if (listCalls === 1) return { status: 200, body: pageOf(1, 50) };
+          if (listCalls === 2)
+            return { status: 500, body: { message: "db went away" } };
+          return { status: 200, body: pageOf(51, 3) };
+        },
+      },
+    ]);
+    render(<SessionEditorApp />);
+    await screen.findByText("#chan-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByText(/db went away/);
+    // The already-loaded page survives the failed append…
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(50);
+
+    // …and the inline Retry completes it.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("#chan-53");
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(53);
+    expect(screen.queryByText(/db went away/)).toBeNull();
   });
 });
 
@@ -574,6 +642,241 @@ describe("editor view", () => {
       await vi.advanceTimersByTimeAsync(1_500);
     });
     expect(screen.getByText(/saved messages: 561/)).toBeTruthy();
+  });
+
+  it("serializes overlapping saves: an edit during an in-flight PUT waits it out (#164)", async () => {
+    gotoRoute("session=3");
+    bootPage();
+    let releaseFirstPut!: () => void;
+    const firstPutGate = new Promise<void>((resolve) => {
+      releaseFirstPut = resolve;
+    });
+    let puts = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { calls } = stubApi([
+      ...EDITOR_ROUTES,
+      {
+        method: "PUT",
+        path: /\/sessions\/3$/,
+        response: async () => {
+          puts += 1;
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          if (puts === 1) await firstPutGate;
+          inFlight -= 1;
+          return { status: 200, body: SESSION_FULL };
+        },
+      },
+    ]);
+    render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    vi.useFakeTimers();
+    // First edit → debounced PUT 1, held open by the gate.
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "dark" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(puts).toBe(1);
+
+    // A second edit lands while PUT 1 is in flight. Its debounce fires, but
+    // the in-flight guard parks the patch instead of overlapping.
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "light" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(puts).toBe(1);
+
+    // PUT 1 completes → the parked patch follows as PUT 2. Never concurrent.
+    releaseFirstPut();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(puts).toBe(2);
+    expect(maxInFlight).toBe(1);
+    const followUp = calls.filter((c) => c.method === "PUT")[1];
+    const editorState = (followUp.body as Record<string, unknown>)
+      .editorState as Record<string, unknown>;
+    expect(editorState.scheme).toBe("light");
+  });
+
+  it("flushes a pending edit when the editor unmounts before the debounce (#174 review)", async () => {
+    gotoRoute("session=3");
+    bootPage();
+    const { calls } = stubApi([
+      ...EDITOR_ROUTES,
+      {
+        method: "PUT",
+        path: /\/sessions\/3$/,
+        response: { status: 200, body: SESSION_FULL },
+      },
+    ]);
+    const view = render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "dark" },
+    });
+    // Unmount with the debounce still pending — navigation away must not
+    // drop the edit; the cleanup flushes immediately.
+    await act(async () => {
+      view.unmount();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const put = calls.find((c) => c.method === "PUT");
+    expect(put).toBeDefined();
+    const editorState = (put!.body as Record<string, unknown>)
+      .editorState as Record<string, unknown>;
+    expect(editorState.scheme).toBe("dark");
+  });
+
+  it("completes a parked edit after unmount without a debounce wait (#174 review)", async () => {
+    gotoRoute("session=3");
+    bootPage();
+    let releaseFirstPut!: () => void;
+    const firstPutGate = new Promise<void>((resolve) => {
+      releaseFirstPut = resolve;
+    });
+    let puts = 0;
+    const { calls } = stubApi([
+      ...EDITOR_ROUTES,
+      {
+        method: "PUT",
+        path: /\/sessions\/3$/,
+        response: async () => {
+          puts += 1;
+          if (puts === 1) await firstPutGate;
+          return { status: 200, body: SESSION_FULL };
+        },
+      },
+    ]);
+    const view = render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "dark" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(puts).toBe(1); // in flight, held by the gate
+
+    // A second edit parks, then the user navigates away mid-flight.
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "light" },
+    });
+    await act(async () => {
+      view.unmount();
+    });
+    expect(puts).toBe(1);
+
+    // When PUT 1 settles there is no debounce timer coming back — the
+    // completion path must flush the parked patch straight away.
+    releaseFirstPut();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(puts).toBe(2);
+    const followUp = calls.filter((c) => c.method === "PUT")[1];
+    const editorState = (followUp.body as Record<string, unknown>)
+      .editorState as Record<string, unknown>;
+    expect(editorState.scheme).toBe("light");
+  });
+
+  it("backs off between consecutive failed retries (#174 review)", async () => {
+    gotoRoute("session=3");
+    bootPage();
+    let puts = 0;
+    stubApi([
+      ...EDITOR_ROUTES,
+      {
+        method: "PUT",
+        path: /\/sessions\/3$/,
+        response: () => {
+          puts += 1;
+          return puts < 3
+            ? { status: 500, body: { message: "boom" } }
+            : { status: 200, body: SESSION_FULL };
+        },
+      },
+    ]);
+    render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "dark" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(puts).toBe(1); // failed; retry scheduled at 5s
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+    });
+    expect(puts).toBe(2); // failed again; next retry doubled to 10s
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(puts).toBe(2); // 6s < 10s: the backoff really grew
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(puts).toBe(3); // 11s ≥ 10s: third attempt, succeeds
+    expect(screen.queryByText("Unsaved")).toBeNull();
+  });
+
+  it("retries a failed save on its own timer, not only on the next edit (#164)", async () => {
+    gotoRoute("session=3");
+    bootPage();
+    let puts = 0;
+    const { calls } = stubApi([
+      ...EDITOR_ROUTES,
+      {
+        method: "PUT",
+        path: /\/sessions\/3$/,
+        response: () => {
+          puts += 1;
+          return puts === 1
+            ? { status: 500, body: { message: "boom" } }
+            : { status: 200, body: SESSION_FULL };
+        },
+      },
+    ]);
+    render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText("Transcript color scheme"), {
+      target: { value: "dark" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(puts).toBe(1);
+    expect(screen.getByText("Unsaved")).toBeTruthy();
+
+    // The retry timer re-sends the merged patch without user action…
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(puts).toBe(2);
+    const retry = calls.filter((c) => c.method === "PUT")[1];
+    const editorState = (retry.body as Record<string, unknown>)
+      .editorState as Record<string, unknown>;
+    expect(editorState.scheme).toBe("dark");
+    // …and success clears the badge.
+    expect(screen.queryByText("Unsaved")).toBeNull();
   });
 
   it("persists editor-state changes with a debounced PUT", async () => {

@@ -89,8 +89,15 @@ export interface SettingsResponse {
   channelDefaults: Record<string, ChannelDefault>;
 }
 
-export function listSessions(signal?: AbortSignal): Promise<SessionLight[]> {
-  return apiFetch<SessionLight[]>("sessions", { signal });
+/** GET /sessions page size — mirrors the server default (Sessions::DEFAULT_PER_PAGE). */
+export const SESSIONS_PER_PAGE = 50;
+
+/** One page (#164). A full page means there may be more; ask for the next. */
+export function listSessions(page = 1, signal?: AbortSignal): Promise<SessionLight[]> {
+  return apiFetch<SessionLight[]>(
+    `sessions?page=${page}&per_page=${SESSIONS_PER_PAGE}`,
+    { signal },
+  );
 }
 
 export function getSession(id: number, signal?: AbortSignal): Promise<SessionFull> {
@@ -122,10 +129,15 @@ export interface SessionPatch {
   messages?: Record<string, unknown>[];
 }
 
-export function putSession(id: number, patch: SessionPatch): Promise<SessionFull> {
+export function putSession(
+  id: number,
+  patch: SessionPatch,
+  signal?: AbortSignal,
+): Promise<SessionFull> {
   return apiFetch<SessionFull>(`sessions/${id}`, {
     method: "PUT",
     body: JSON.stringify(patch),
+    signal,
   });
 }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { SESSIONS_PER_PAGE } from "@/components/admin/sessionApi";
 
 /**
  * openapi.yaml is hand-maintained; this suite keeps it honest against BOTH
@@ -152,6 +153,20 @@ describe("openapi.yaml stays honest against the plugin's registered routes", () 
     for (const [, ref] of refs) {
       expect(defined.has(ref), ref).toBe(true);
     }
+  });
+
+  it("pins the sessions page size across spec, client, and store (#164)", () => {
+    // Three literals must agree: the spec's documented default, the client
+    // constant driving the "full page = maybe more" heuristic, and the
+    // store's LIMIT fallback. routes.test.php pins the PHP pair (Schemas ↔
+    // Sessions::DEFAULT_PER_PAGE); this closes the loop from the JS side.
+    expect(spec.components.parameters.perPage.schema.default).toBe(SESSIONS_PER_PAGE);
+    expect(spec.components.parameters.perPage.schema.maximum).toBe(200);
+    const storePhp = readFileSync(
+      join(ROOT, "wordpress-plugin", "src", "Store", "Sessions.php"),
+      "utf8",
+    );
+    expect(storePhp).toContain(`DEFAULT_PER_PAGE = ${SESSIONS_PER_PAGE};`);
   });
 
   it("names the auth scheme and the versioning policy", () => {

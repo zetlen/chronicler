@@ -145,6 +145,24 @@ final class Schemas
         return $schema + ['sanitize_callback' => [\Chronicler\Sanitize::class, 'tree']];
     }
 
+    /**
+     * GET /sessions — WP-core-style pagination (#164). Defaults keep the
+     * pre-pagination client working for the first DEFAULT_PER_PAGE sessions;
+     * totals travel in X-WP-Total/X-WP-TotalPages, as core does it.
+     */
+    public static function sessionListArgs(): array
+    {
+        return [
+            'page' => ['type' => 'integer', 'minimum' => 1, 'default' => 1],
+            'per_page' => [
+                'type' => 'integer',
+                'minimum' => 1,
+                'maximum' => 200,
+                'default' => \Chronicler\Store\Sessions::DEFAULT_PER_PAGE,
+            ],
+        ];
+    }
+
     /** POST /sessions — the minimal draft body plus optional payload fields. */
     public static function sessionCreateArgs(): array
     {

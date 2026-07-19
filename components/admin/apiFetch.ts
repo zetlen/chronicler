@@ -69,9 +69,20 @@ export function getBoot(): ChroniclerBoot | null {
   return boot;
 }
 
-/** Join the REST base and an endpoint path without doubling slashes. */
+/**
+ * Join the REST base and an endpoint path without doubling slashes. A
+ * plain-permalink base is itself a query (`/?rest_route=/chronicler/v1`),
+ * so a path's own query string must chain with `&`, not open a second `?`
+ * — otherwise the route regex sees `/sessions?page=1` and 404s. Same
+ * convention as imageUrls.ts::sessionImageProxyBase.
+ */
 function joinApi(apiBase: string, path: string): string {
-  return `${apiBase.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  const base = apiBase.replace(/\/+$/, "");
+  let clean = path.replace(/^\/+/, "");
+  if (base.includes("?")) {
+    clean = clean.replace("?", "&");
+  }
+  return `${base}/${clean}`;
 }
 
 /** WP REST errors look like `{code, message, data:{status}}`; be lenient. */

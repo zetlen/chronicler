@@ -132,9 +132,22 @@ paths:
       tags: [sessions]
       operationId: listSessions
       summary: List sessions (light shape, no message payloads)
+      description: Paginated (#164), WordPress-core style — `page`/`per_page` in, totals in the `X-WP-Total`/`X-WP-TotalPages` response headers.
+      parameters:
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/perPage"
       responses:
         "200":
-          description: Sessions ordered by last update, newest first.
+          description: One page of sessions ordered by last update, newest first.
+          headers:
+            X-WP-Total:
+              description: Total stored sessions.
+              schema:
+                type: integer
+            X-WP-TotalPages:
+              description: Total pages at this `per_page`.
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -650,6 +663,23 @@ components:
       required: true
       schema:
         type: integer
+    page:
+      name: page
+      in: query
+      description: 1-based page of results.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    perPage:
+      name: per_page
+      in: query
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
 
   responses:
     BadRequest:

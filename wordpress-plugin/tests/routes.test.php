@@ -102,6 +102,13 @@ check(
     isset($defs['/sessions']['schema'], $defs['/sessions/(?P<id>\d+)']['schema'], $defs['/rules']['schema'], $defs['/rules/(?P<id>\d+)']['schema'], $defs['/settings']['schema'])
 );
 
+// GET /sessions is paginated (#164): WP-core-style page/per_page, bounded,
+// with the default page size mirroring the store's LIMIT fallback.
+$listArgs = $defs['/sessions']['operations']['GET']['args'] ?? [];
+check('/sessions GET pages from 1', ($listArgs['page']['default'] ?? null) === 1 && ($listArgs['page']['minimum'] ?? null) === 1);
+check('/sessions GET per_page is bounded', ($listArgs['per_page']['minimum'] ?? null) === 1 && ($listArgs['per_page']['maximum'] ?? null) === 200);
+check('/sessions GET per_page default mirrors the store', ($listArgs['per_page']['default'] ?? null) === Sessions::DEFAULT_PER_PAGE);
+
 // GET /image (#103) validates its query args like the write routes do:
 // url is required (and format:uri pre-screened), alt optional.
 $imageArgs = $defs['/image']['operations']['GET']['args'] ?? [];

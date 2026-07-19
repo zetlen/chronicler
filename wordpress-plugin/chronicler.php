@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Chronicler
  * Description: Chronicles Slack RPG sessions — a wp-admin session editor, transcripts as Gutenberg blocks, and schema-driven character sheets.
- * Version: 4.16.0
+ * Version: 4.17.0
  * Requires at least: 6.2
  * Requires PHP: 8.2
  * License: GPLv3 or later
@@ -67,6 +67,39 @@ Chronicler\Store\Rules::register();
 // Image mirror (#103): cron eviction callback + update-safe daily schedule.
 Chronicler\Media\Mirror::register();
 register_deactivation_hook(__FILE__, [Chronicler\Media\Mirror::class, 'unschedule']);
+// Deactivation also clears the plugin's rewrite-rule residue (#164): left
+// behind, the chr_character rules (/characters, characters/%) would shadow
+// future content wanting those slugs until permalinks were re-saved.
+// Deleting the option beats flush_rewrite_rules() here (uninstall.php's
+// reasoning): this hook runs after init, chr_character is still registered,
+// and a flush regenerates IMMEDIATELY — rebuilding the very rules it's
+// meant to drop. Deletion regenerates clean rules lazily on the next
+// request, when the deactivated plugin no longer registers its CPT. On a
+// network-wide deactivation every site carries the residue, so every site's
+// option goes (#174 review).
+register_deactivation_hook(__FILE__, static function ($network_wide): void {
+    if ($network_wide && is_multisite()) {
+        foreach (get_sites(['fields' => 'ids', 'number' => 0]) as $site_id) {
+            switch_to_blog((int) $site_id);
+            delete_option('rewrite_rules');
+            restore_current_blog();
+        }
+        return;
+    }
+    delete_option('rewrite_rules');
+});
+
+// A data-loss warning on the plugin's own Plugins-screen row (#174): the
+// closest reachable spot to the Delete action. Best-effort by nature — once
+// the plugin is deactivated (the state Delete requires) this code no longer
+// runs, so Settings\Screen::render() and readme.txt's FAQ carry the durable
+// copies of the same warning.
+add_filter('plugin_row_meta', static function (array $meta, string $file): array {
+    if ($file === plugin_basename(__FILE__)) {
+        $meta[] = '<span style="color:#996800">Deleting this plugin removes its sessions and character sheets; published transcripts are kept.</span>';
+    }
+    return $meta;
+}, 10, 2);
 
 register_activation_hook(__FILE__, 'chronicler_sheets_activate');
 register_activation_hook(__FILE__, [Chronicler\Capabilities::class, 'grant']);

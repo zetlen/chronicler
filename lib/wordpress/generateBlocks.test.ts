@@ -593,3 +593,22 @@ describe("generate/mirror.js", () => {
     expect(progress).not.toHaveBeenCalled();
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * generate/placeholder/index.js — the session picker's data access.
+ * The script needs the full wp.* editor surface to evaluate, so these are
+ * source pins (the openapi.test.ts approach), not behavioral tests.
+ * ------------------------------------------------------------------ */
+
+describe("generate/placeholder/index.js", () => {
+  const src = readFileSync("wordpress-plugin/generate/placeholder/index.js", "utf8");
+
+  it("pages the session picker past GET /sessions' bound (#174 review)", () => {
+    // #164 paginated the route (default 50); an unparameterized fetch here
+    // would silently truncate the picker on larger installs. The picker must
+    // ask at the max page size and keep going until a short page arrives.
+    expect(src).toContain("per_page=200");
+    expect(src).toMatch(/batch\.length === 200 \? fetchAllSessions\(page \+ 1/);
+    expect(src).not.toMatch(/path: '\/chronicler\/v1\/sessions'(?!\/)/);
+  });
+});

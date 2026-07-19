@@ -151,20 +151,36 @@ final class Sessions
         return (bool) $wpdb->delete(self::tableName(), ['id' => $id]);
     }
 
+    /** GET /sessions default page size; Schemas::sessionListArgs() mirrors it. */
+    public const DEFAULT_PER_PAGE = 50;
+
     /**
-     * Every Session in light form (no messages, no editor state), newest
-     * activity first. The payload columns are not in the SELECT at all.
+     * One page of Sessions in light form (no messages, no editor state),
+     * newest activity first. The payload columns are not in the SELECT at
+     * all. Bounded since #164 — the query always carries a LIMIT.
      */
-    public static function all(): array
+    public static function all(int $limit = self::DEFAULT_PER_PAGE, int $offset = 0): array
     {
         global $wpdb;
         $table = self::tableName();
         $columns = self::LIGHT_COLUMNS;
         $rows = $wpdb->get_results(
-            "SELECT $columns FROM $table ORDER BY updated_at DESC, id DESC",
+            $wpdb->prepare(
+                "SELECT $columns FROM $table ORDER BY updated_at DESC, id DESC LIMIT %d OFFSET %d",
+                max(1, $limit),
+                max(0, $offset)
+            ),
             ARRAY_A
         );
         return array_map([self::class, 'lightFromRow'], is_array($rows) ? $rows : []);
+    }
+
+    /** Total stored Sessions — feeds the list response's X-WP-Total headers. */
+    public static function count(): int
+    {
+        global $wpdb;
+        $table = self::tableName();
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM $table");
     }
 
     /* ------------------------------------------------------------------ *

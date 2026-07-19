@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { listSessions, type SessionLight } from "@/components/admin/sessionApi";
+import {
+  listSessions,
+  SESSIONS_PER_PAGE,
+  type SessionLight,
+} from "@/components/admin/sessionApi";
 import { navigateToSession } from "@/components/admin/sessionRoute";
 import { formatRange, formatUtcTimestamp } from "@/components/admin/datetime";
 import {
@@ -9,15 +13,24 @@ import {
 } from "@/components/admin/ui";
 
 /**
- * The session editor's home view (#96): every stored Session in light form
+ * The session editor's home view (#96): stored Sessions in light form
  * (GET /sessions — channel, range, message count, last activity), with Edit
- * per row and "New session" up top.
+ * per row and "New session" up top. Paged since #164: newest
+ * SESSIONS_PER_PAGE first, "Load more" appends the next page. A full page
+ * is the "maybe more" signal — the boundary case costs one extra fetch.
  */
 
 type ListState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; sessions: SessionLight[] };
+  | {
+      kind: "ready";
+      sessions: SessionLight[];
+      hasMore: boolean;
+      loadingMore: boolean;
+      /** A failed APPEND keeps the loaded rows; only the initial load owns `error`. */
+      loadMoreError: string | null;
+    };
 
 export function SessionList() {
   const [state, setState] = useState<ListState>({ kind: "loading" });
@@ -25,9 +38,17 @@ export function SessionList() {
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    listSessions(controller.signal)
+    listSessions(1, controller.signal)
       .then((sessions) => {
-        if (!cancelled) setState({ kind: "ready", sessions });
+        if (!cancelled) {
+          setState({
+            kind: "ready",
+            sessions,
+            hasMore: sessions.length === SESSIONS_PER_PAGE,
+            loadingMore: false,
+            loadMoreError: null,
+          });
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -41,6 +62,39 @@ export function SessionList() {
       controller.abort();
     };
   }, []);
+
+  function loadMore() {
+    if (state.kind !== "ready" || state.loadingMore) return;
+    const loaded = state.sessions;
+    setState({ ...state, loadingMore: true, loadMoreError: null });
+    listSessions(Math.floor(loaded.length / SESSIONS_PER_PAGE) + 1)
+      .then((next) => {
+        // Offset paging drifts when sessions are created/updated between
+        // clicks; deduping by id stops the visible symptom (repeated rows).
+        // A shifted-out row stays missed until a reload — inherent to
+        // offset pagination, acceptable for an admin list.
+        const seen = new Set(loaded.map((s) => s.id));
+        setState({
+          kind: "ready",
+          sessions: [...loaded, ...next.filter((s) => !seen.has(s.id))],
+          hasMore: next.length === SESSIONS_PER_PAGE,
+          loadingMore: false,
+          loadMoreError: null,
+        });
+      })
+      .catch((err: unknown) => {
+        // A transient blip on an append must not discard rows the user
+        // already has; surface it at the button instead.
+        setState({
+          kind: "ready",
+          sessions: loaded,
+          hasMore: true,
+          loadingMore: false,
+          loadMoreError:
+            err instanceof Error ? err.message : "Couldn't load more sessions.",
+        });
+      });
+  }
 
   return (
     <div className="flex max-w-4xl flex-col gap-4">
@@ -109,6 +163,28 @@ export function SessionList() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {state.kind === "ready" && state.hasMore && (
+        <div className="flex flex-col items-center gap-2">
+          {state.loadMoreError !== null && (
+            <div className={ERROR_NOTICE_CLS}>
+              Couldn&rsquo;t load more sessions: {state.loadMoreError}
+            </div>
+          )}
+          <button
+            type="button"
+            className={SMALL_BUTTON_CLS}
+            disabled={state.loadingMore}
+            onClick={loadMore}
+          >
+            {state.loadingMore
+              ? "Loading…"
+              : state.loadMoreError !== null
+                ? "Retry"
+                : "Load more"}
+          </button>
         </div>
       )}
     </div>

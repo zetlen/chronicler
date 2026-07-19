@@ -292,6 +292,19 @@ final class Screen
             echo '<p><button class="button button-primary">Save &amp; Test Connection</button></p>';
         }
         echo '</form>';
+
+        // Uninstall warning (#174): the Plugins screen's Delete flow can't be
+        // annotated at click time (a deactivated plugin's code never runs),
+        // so the admins' own settings surface carries the durable warning.
+        // Wording mirrors uninstall.php's keep/delete inventory.
+        echo '<hr style="margin:2em 0">';
+        echo '<h2>Uninstalling</h2>';
+        echo '<p><strong>Deactivating</strong> Chronicler keeps all of its data. '
+            . '<strong>Deleting</strong> it from the Plugins screen permanently removes its data: '
+            . 'saved sessions, character sheets, the game-system template, and transcription rules. '
+            . 'Published transcripts are ordinary posts and are kept — along with media you uploaded '
+            . 'and images your published transcripts use.</p>';
+
         echo '</div>';
     }
 }

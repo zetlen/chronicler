@@ -49,12 +49,45 @@ describe("the static plugin source", () => {
     expect(php).toMatch(/'html' => \['type' => 'string', 'default' => ''\]/);
   });
 
+  it("clears rewrite residue on deactivation by deleting the option (#164)", () => {
+    // Deletion, not flush_rewrite_rules(): the hook runs after init with
+    // chr_character still registered, and a flush regenerates immediately —
+    // rebuilding the residue it exists to drop. Deleting regenerates clean
+    // rules lazily on the next, plugin-less request (uninstall.php's
+    // reasoning). Network-wide deactivation clears every site's option.
+    expect(loader).toContain("register_deactivation_hook");
+    expect(loader).toContain("delete_option('rewrite_rules');");
+    expect(loader).not.toContain("flush_rewrite_rules();");
+    expect(loader).toMatch(/\$network_wide && is_multisite\(\)/);
+  });
+
+  it("warns about uninstall data loss on the plugin row (#174)", () => {
+    // Best-effort proximity to the Delete action; Settings\Screen::render()
+    // and readme.txt's FAQ carry the durable copies.
+    expect(loader).toContain("add_filter('plugin_row_meta'");
+    expect(loader).toContain("removes its sessions and character sheets");
+  });
+
+  it("registers every transcript block at Block API v3 (#164)", () => {
+    // Four registrations per side, each carrying the version key — a new
+    // block added without one would default back to v1.
+    expect(php.match(/register_block_type\('chronicler\//g)).toHaveLength(4);
+    expect(php.match(/'api_version' => 3/g)).toHaveLength(4);
+    expect(editorJs.match(/registerBlockType\('chronicler\//g)).toHaveLength(4);
+    // Three literals cover four blocks: thread + replies share container()'s.
+    expect(editorJs.match(/apiVersion: 3/g)).toHaveLength(3);
+  });
+
   it("registers the editor-side block definitions", () => {
     for (const block of ["transcript", "thread", "replies", "message"]) {
       expect(editorJs).toContain(`registerBlockType('chronicler/${block}'`);
     }
     expect(php).toContain("enqueue_block_editor_assets");
     expect(php).toContain("plugins_url('editor.js'");
+    // …scoped to transcript-hosting post types (#164), with a filter as the
+    // escape hatch for sites keeping transcripts in a CPT.
+    expect(php).toContain("chronicler_is_transcript_editor_screen()");
+    expect(php).toContain("apply_filters('chronicler_editor_post_types'");
   });
 
   it("mirrors the front-end scheme/density/CSS derivation in the editor view", () => {

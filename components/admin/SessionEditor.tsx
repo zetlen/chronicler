@@ -73,6 +73,17 @@ import {
  */
 
 const SAVE_DEBOUNCE_MS = 1_000;
+/** First retry delay for a failed PUT (#164); doubles per consecutive failure. */
+const SAVE_RETRY_MS = 5_000;
+/** Backoff ceiling — a persistently sick server gets a 1–2 MB PUT at most this often. */
+const SAVE_RETRY_MAX_MS = 60_000;
+/**
+ * Abort a save that never settles (#174 review): the in-flight guard holds
+ * until the PUT resolves, so a hung socket would otherwise wedge autosave
+ * for the life of the tab. Generous because the messages payload can be
+ * 1–2 MB on a slow uplink.
+ */
+const SAVE_TIMEOUT_MS = 60_000;
 
 type LoadState =
   | { kind: "loading" }
@@ -176,32 +187,72 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
   const mountedRef = useRef(true);
   const pendingRef = useRef<SessionPatch>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const inFlightRef = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const failedSavesRef = useRef(0);
 
   async function flushSave() {
+    // In-flight guard (#164): the server is last-write-wins, so two
+    // overlapping PUTs (slow link, 1–2 MB messages payload) could land out
+    // of order and silently drop the newer patch. While one is in flight,
+    // later flushes park their edits in pendingRef; the completion path
+    // below runs the follow-up pass.
+    if (inFlightRef.current) return;
     const patch = pendingRef.current;
     if (Object.keys(patch).length === 0) return;
     pendingRef.current = {};
+    inFlightRef.current = true;
+    clearTimeout(retryTimerRef.current);
     if (mountedRef.current) setSaveState("saving");
     try {
-      const saved = await putSession(sessionId, patch);
-      if (!mountedRef.current) return;
-      // The header count comes from the stored session; adopt the PUT
-      // response so the first fetch's save shows without a reload (#124).
-      // Same-count saves keep the previous object to spare the fragment memo.
-      setSession((prev) =>
-        prev && prev.messageCount !== saved.messageCount
-          ? { ...prev, messageCount: saved.messageCount }
-          : prev,
-      );
+      const saved = await putSession(sessionId, patch, AbortSignal.timeout(SAVE_TIMEOUT_MS));
+      inFlightRef.current = false;
+      failedSavesRef.current = 0;
+      if (mountedRef.current) {
+        // The header count comes from the stored session; adopt the PUT
+        // response so the first fetch's save shows without a reload (#124).
+        // Same-count saves keep the previous object to spare the fragment memo.
+        setSession((prev) =>
+          prev && prev.messageCount !== saved.messageCount
+            ? { ...prev, messageCount: saved.messageCount }
+            : prev,
+        );
+      }
       if (Object.keys(pendingRef.current).length > 0) {
-        queueSave({}); // edits landed mid-flight; another pass
-      } else {
+        // Edits landed mid-flight; another pass. After unmount the debounce
+        // timer would never be honored, so flush straight away.
+        if (mountedRef.current) {
+          queueSave({});
+        } else {
+          void flushSave();
+        }
+      } else if (mountedRef.current) {
         setSaveState("idle");
       }
     } catch {
-      // Newer edits win over the failed patch; the next edit retries.
+      inFlightRef.current = false;
+      // Newer edits win over the failed patch, and a timer retries on its
+      // own (backing off per consecutive failure); an edit before then
+      // flushes sooner. No retry after unmount — nothing would ever clear
+      // a zombie loop — so that failure is terminal: say so.
       pendingRef.current = { ...patch, ...pendingRef.current };
-      if (mountedRef.current) setSaveState("error");
+      failedSavesRef.current += 1;
+      if (mountedRef.current) {
+        setSaveState("error");
+        clearTimeout(retryTimerRef.current);
+        const backoff = Math.min(
+          SAVE_RETRY_MS * 2 ** (failedSavesRef.current - 1),
+          SAVE_RETRY_MAX_MS,
+        );
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = undefined;
+          void flushSave();
+        }, backoff);
+      } else {
+        console.warn(
+          `Chronicler: a session ${sessionId} save failed during navigation and was not retried; the last change may be unsaved.`,
+        );
+      }
     }
   }
 
@@ -368,15 +419,20 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
     };
   }, [sessionId]);
 
-  // Unmount: flush a pending save, abort a running fetch.
+  // Unmount: flush pending edits now, abort a running fetch. A React cleanup
+  // can't await, so the flush promise outlives the component — the in-flight
+  // guard still serializes it against a running PUT, and the completion path
+  // flushes anything parked mid-flight (immediately, once unmounted).
   useEffect(() => {
+    // Reset on every (re)mount: under a StrictMode-style unmount/remount the
+    // ref survives, and a stale false would mute every mounted-guard forever.
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       fetchAbortRef.current?.abort();
-      if (saveTimerRef.current !== undefined) {
-        clearTimeout(saveTimerRef.current);
-        void flushSaveRef.current();
-      }
+      clearTimeout(saveTimerRef.current);
+      clearTimeout(retryTimerRef.current);
+      void flushSaveRef.current();
     };
   }, []);
 
@@ -605,7 +661,7 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
           {saveState === "error" && (
             <span
               className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
-              title="A change didn't save — it'll retry on your next edit."
+              title="A change didn't save — retrying automatically."
             >
               Unsaved
             </span>

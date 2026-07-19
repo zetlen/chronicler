@@ -62,6 +62,13 @@ describe("editor.js contract", () => {
     );
   });
 
+  it("registers every block at Block API v3 (#164)", () => {
+    expect(registeredBlocks).toHaveLength(4);
+    for (const block of registeredBlocks) {
+      expect(block.settings.apiVersion, block.name).toBe(3);
+    }
+  });
+
   it("registers the message block with a v3 edit surface", () => {
     const message = registeredBlocks.find((b) => b.name === "chronicler/message");
     expect(message).toBeDefined();

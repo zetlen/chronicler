@@ -128,8 +128,12 @@
     authorView: authorView,
   };
 
+  // apiVersion 3 everywhere (#164), matching the server registrations: the
+  // editor may put these blocks in its iframed canvas. All edit surfaces
+  // already use useBlockProps, the v2+ requirement.
   function container(title, className, attributes) {
     return {
+      apiVersion: 3,
       title: title,
       category: 'text',
       attributes: attributes,
@@ -147,6 +151,7 @@
   // from attributes. There is no enqueued stylesheet anywhere — a post's
   // styles are its own data, in the editor as on the front end.
   wp.blocks.registerBlockType('chronicler/transcript', {
+    apiVersion: 3,
     title: 'Chronicler transcript',
     category: 'text',
     attributes: {
@@ -247,6 +252,7 @@
   }));
 
   wp.blocks.registerBlockType('chronicler/message', {
+    apiVersion: 3,
     title: 'Slack message',
     category: 'text',
     attributes: {

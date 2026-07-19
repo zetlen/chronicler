@@ -77,6 +77,7 @@ final class Routes
                     'GET' => [
                         'handler' => 'listSessions',
                         'permission' => Capabilities::COMPOSE,
+                        'args' => Schemas::sessionListArgs(),
                         'response' => ['type' => 'array', 'items' => Schemas::sessionLightResponse()],
                     ],
                     'POST' => [
@@ -263,10 +264,20 @@ final class Routes
      * Sessions (#101)
      * ------------------------------------------------------------------ */
 
-    /** GET /sessions — light objects only; payloads stay in the database. */
-    public function listSessions()
+    /** GET /sessions — light objects only, one page at a time (#164);
+     *  payloads stay in the database, totals in the X-WP-* headers. The
+     *  clamps mirror the arg schema's minimums: HTTP callers are already
+     *  validated, but a direct PHP caller shouldn't reach a division by
+     *  zero or a negative OFFSET either. */
+    public function listSessions(WP_REST_Request $request)
     {
-        return rest_ensure_response(Sessions::all());
+        $perPage = max(1, (int) $request->get_param('per_page'));
+        $page = max(1, (int) $request->get_param('page'));
+        $response = rest_ensure_response(Sessions::all($perPage, ($page - 1) * $perPage));
+        $total = Sessions::count();
+        $response->header('X-WP-Total', (string) $total);
+        $response->header('X-WP-TotalPages', (string) (int) ceil($total / $perPage));
+        return $response;
     }
 
     /** POST /sessions — a minimal {integration, channel, start, end} body

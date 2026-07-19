@@ -50,6 +50,22 @@ describe("apiFetch", () => {
     expect(calls[0].url).toBe("/wp-json/chronicler/v1/sessions");
   });
 
+  it("chains a path's query onto a plain-permalink base with & (#174 review)", async () => {
+    boot("/?rest_route=/chronicler/v1");
+    const { calls } = stubFetch(200, []);
+    await apiFetch("sessions?page=1&per_page=50");
+    // A second `?` would make PHP parse rest_route as "/…/sessions?page=1"
+    // and 404; the query must fold into the base's own query string.
+    expect(calls[0].url).toBe("/?rest_route=/chronicler/v1/sessions&page=1&per_page=50");
+  });
+
+  it("leaves a path query untouched on a pretty-permalink base", async () => {
+    boot("/wp-json/chronicler/v1");
+    const { calls } = stubFetch(200, []);
+    await apiFetch("sessions?page=2&per_page=50");
+    expect(calls[0].url).toBe("/wp-json/chronicler/v1/sessions?page=2&per_page=50");
+  });
+
   it("returns the parsed JSON body", async () => {
     boot();
     stubFetch(200, { channels: [{ id: "C1" }] });
