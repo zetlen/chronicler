@@ -72,6 +72,7 @@ export interface WpRule {
   mode: RuleMode;
   className: string;
   tagNames: string;
+  treatments: string;
   description: string;
 }
 
@@ -151,6 +152,7 @@ export interface RuleCreateBody {
   mode: RuleMode;
   className?: string;
   tagNames?: string;
+  treatments?: string;
   description?: string;
 }
 

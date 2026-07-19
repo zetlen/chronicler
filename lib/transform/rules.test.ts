@@ -5,6 +5,7 @@ import {
   compileRule,
   ruleError,
   classTokens,
+  treatmentTokens,
   injectRootClasses,
   applyRules,
 } from "@/lib/transform/rules";
@@ -319,5 +320,57 @@ describe("applyRules wp-tag", () => {
       rule({ id: "b", pattern: "session", mode: "wp-tag", tagNames: "  ,  " }),
     ]);
     expect(tags).toEqual([]);
+  });
+});
+
+// --- treatmentTokens --------------------------------------------------------
+
+describe("treatmentTokens", () => {
+  it("splits on commas and whitespace and keeps only known variants", () => {
+    expect(treatmentTokens("ooc, important")).toEqual(["ooc", "important"]);
+    expect(treatmentTokens("important ooc")).toEqual(["ooc", "important"]); // vocabulary order
+    expect(treatmentTokens("OOC")).toEqual(["ooc"]); // case-insensitive
+  });
+
+  it("drops unknown names and returns [] for empty input", () => {
+    expect(treatmentTokens("ghost, spooky")).toEqual([]);
+    expect(treatmentTokens("")).toEqual([]);
+    expect(treatmentTokens(undefined)).toEqual([]);
+  });
+});
+
+// --- applyRules: treatment --------------------------------------------------
+
+describe("applyRules treatment", () => {
+  it("sets variants on matching messages and counts matches", () => {
+    const rules = [rule({ pattern: "session", mode: "treatment", treatments: "ooc" })];
+    const outcome = applyRules(CHAT, rules);
+    expect(outcome.effects.get("2")?.variants).toEqual(["ooc"]);
+    expect(outcome.effects.get("5")?.variants).toEqual(["ooc"]);
+    expect(outcome.effects.get("3")?.variants ?? []).toEqual([]);
+    expect(outcome.effects.get("2")?.hidden).toBeFalsy();
+    expect(outcome.matchCounts.get("r1")).toBe(2);
+  });
+
+  it("accumulates variants from multiple rules without duplicates", () => {
+    const rules = [
+      rule({ id: "a", pattern: "start", mode: "treatment", treatments: "ooc" }),
+      rule({ id: "b", pattern: "session", mode: "treatment", treatments: "ooc, important" }),
+    ];
+    expect(applyRules(CHAT, rules).effects.get("2")?.variants).toEqual(["ooc", "important"]);
+  });
+
+  it("ignores unknown treatment names but still counts matches", () => {
+    const rules = [rule({ pattern: "session", mode: "treatment", treatments: "spooky" })];
+    const outcome = applyRules(CHAT, rules);
+    expect(outcome.matchCounts.get("r1")).toBe(2);
+    expect(outcome.effects.get("2")?.variants ?? []).toEqual([]);
+  });
+
+  it("is inert when disabled", () => {
+    const rules = [
+      rule({ pattern: "session", mode: "treatment", treatments: "ooc", enabled: false }),
+    ];
+    expect(applyRules(CHAT, rules).effects.get("2")?.variants ?? []).toEqual([]);
   });
 });

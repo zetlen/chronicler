@@ -176,3 +176,88 @@ describe("regression: image-bearing thread replies", () => {
     expect(html).toContain('<figure class="slk-image">');
   });
 });
+
+describe("treatment rules feed compose-time variants (#154)", () => {
+  // A directory where the display name is a character override, so the OOC
+  // byline swap has a real name to reveal.
+  const ruleCtx = (
+    effects: Map<string, { hidden: boolean; classes: string[]; variants: string[] }>,
+  ) =>
+    ({
+      directory: {
+        userName: () => "Marisol the Bold",
+        realUserName: () => "Alice",
+        channelName: (id?: string) => id ?? "channel",
+        userColor: () => "#4674b8",
+        userAvatar: () => undefined,
+      },
+      imageMode: "proxy",
+      showAvatars: false,
+      showTimestamps: false,
+      showReactions: false,
+      density: "comfortable",
+      scheme: "light",
+      hiddenKinds: new Set(),
+      customEmoji: {},
+      ruleEffects: effects,
+    }) as unknown as RenderContext;
+
+  const textMsg: SlackMessage = {
+    type: "message",
+    ts: "300.000",
+    user: "U1",
+    text: "(brb, dog needs out)",
+  };
+
+  it("merges rule variants into bubble parts", () => {
+    const ctx = ruleCtx(
+      new Map([["300.000", { hidden: false, classes: [], variants: ["ooc"] }]]),
+    );
+    const parts = transformMessage(textMsg, ctx);
+    if (parts.kind !== "bubble") throw new Error("expected a bubble");
+    expect(parts.variants).toEqual(["ooc"]);
+  });
+
+  it("swaps the byline to the real name in composed HTML when ooc is set", () => {
+    const ctx = ruleCtx(
+      new Map([["300.000", { hidden: false, classes: [], variants: ["ooc"] }]]),
+    );
+    const html = transformMessageHtml(textMsg, ctx);
+    expect(html).toContain('<span class="slk-msg__author">Alice</span>');
+    expect(html).toContain("slk-msg--ooc");
+  });
+
+  it("keeps the character byline when no treatment applies", () => {
+    const ctx = ruleCtx(new Map());
+    const html = transformMessageHtml(textMsg, ctx);
+    expect(html).toContain('<span class="slk-msg__author">Marisol the Bold</span>');
+    expect(html).not.toContain("slk-msg--ooc");
+  });
+
+  it("combines rule classes and variants on one message", () => {
+    const ctx = ruleCtx(
+      new Map([
+        ["300.000", { hidden: false, classes: ["marker"], variants: ["important"] }],
+      ]),
+    );
+    const html = transformMessageHtml(textMsg, ctx);
+    expect(html).toContain("slk-msg--important");
+    expect(html).toContain("marker");
+  });
+
+  it("degrades to class injection for raw (system) messages", () => {
+    const sysMsg: SlackMessage = {
+      type: "message",
+      subtype: "channel_join",
+      ts: "301.000",
+      user: "U1",
+      text: "<@U1> has joined the channel",
+    };
+    const ctx = ruleCtx(
+      new Map([["301.000", { hidden: false, classes: [], variants: ["ooc"] }]]),
+    );
+    const parts = transformMessage(sysMsg, ctx);
+    if (parts.kind !== "raw") throw new Error("expected raw parts");
+    expect(parts.rawHtml).toContain("slk-msg--ooc");
+  });
+});

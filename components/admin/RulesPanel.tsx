@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Group } from "@/components/Group";
 import { ruleError, type RuleMode } from "@/lib/transform/rules";
+import { MESSAGE_VARIANTS, type MessageVariant } from "@/lib/transform/variants";
 import {
   createRule,
   type RuleCreateBody,
@@ -23,6 +24,13 @@ const RULE_MODE_LABELS: Record<RuleMode, string> = {
   start: "Start at",
   end: "End at",
   "wp-tag": "WP tag",
+  treatment: "Treatment",
+};
+
+/** Author-facing names for the message treatments a "treatment" rule can set. */
+const TREATMENT_LABELS: Record<MessageVariant, string> = {
+  ooc: "Out of character",
+  important: "Important",
 };
 
 /** The Rules CPT list screen (#109); relative — we're already in wp-admin. */
@@ -59,8 +67,9 @@ export function RulesPanel(props: Props) {
       <p className="text-xs text-zinc-400">
         Matched against each message&rsquo;s text. <em>Start at</em> /{" "}
         <em>end at</em> trim the transcript, <em>hide</em> removes matches,{" "}
-        <em>add class</em> tags them for custom CSS, and <em>WP tag</em>{" "}
-        proposes post tags.{" "}
+        <em>add class</em> tags them for custom CSS, <em>WP tag</em> proposes
+        post tags, and <em>treatment</em> marks matches out of character or
+        important.{" "}
         <a
           className="text-sky-700 hover:underline"
           href={RULES_ADMIN_URL}
@@ -209,6 +218,7 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
   const [mode, setMode] = useState<RuleMode>("hide");
   const [className, setClassName] = useState("");
   const [tagNames, setTagNames] = useState("");
+  const [treatments, setTreatments] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,6 +237,7 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
       mode,
       className,
       tagNames,
+      treatments: treatments.join(","),
       description,
     };
     try {
@@ -307,6 +318,28 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
           aria-label="WordPress tags to add when this rule matches"
           className={FIELD_CLS}
         />
+      )}
+      {mode === "treatment" && (
+        <div
+          className="flex items-center gap-4"
+          role="group"
+          aria-label="Treatments for matching messages"
+        >
+          {MESSAGE_VARIANTS.map((v) => (
+            <label key={v} className="flex items-center gap-1.5 text-xs text-zinc-600">
+              <input
+                type="checkbox"
+                checked={treatments.includes(v)}
+                onChange={(e) =>
+                  setTreatments((prev) =>
+                    e.target.checked ? [...prev, v] : prev.filter((t) => t !== v),
+                  )
+                }
+              />
+              {TREATMENT_LABELS[v]}
+            </label>
+          ))}
+        </div>
       )}
       <input
         value={description}

@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.19.0
+Stable tag: 4.20.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.20.0 =
+* Transcription rules can now mark matching messages as out of character or important — the same treatments the block editor offers per message. An out-of-character match shows the author's real name in the byline and joins the transcript's "Show OOC messages" toggle, and the treatment carries through to the saved session and published transcript.
 
 = 4.19.0 =
 * The media library no longer collects duplicate copies of the same image: a Slack image already mirrored under a different URL now reuses the existing attachment instead of storing another copy, and a daily task fingerprints images mirrored before this release so they are recognized too.

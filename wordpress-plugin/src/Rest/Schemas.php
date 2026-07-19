@@ -16,7 +16,7 @@ final class Schemas
     public const SCHEMES = ['light', 'dark', 'custom-light', 'custom-dark'];
 
     /** RuleMode in lib/transform/rules.ts. */
-    public const RULE_MODES = ['start', 'end', 'hide', 'addclass', 'wp-tag'];
+    public const RULE_MODES = ['start', 'end', 'hide', 'addclass', 'wp-tag', 'treatment'];
 
     /**
      * Message-object schema: EXACTLY the attribute schema the
@@ -207,6 +207,7 @@ final class Schemas
             'mode' => ['type' => 'string', 'enum' => self::RULE_MODES],
             'className' => ['type' => 'string', 'default' => ''],
             'tagNames' => ['type' => 'string', 'default' => ''],
+            'treatments' => ['type' => 'string', 'default' => ''],
             'description' => ['type' => 'string', 'default' => ''],
         ];
     }

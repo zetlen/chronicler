@@ -345,14 +345,14 @@ final class Routes
 
     public function createRule(WP_REST_Request $request)
     {
-        $rule = Rules::create([
-            'pattern' => $request['pattern'],
-            'flags' => $request['flags'],
-            'mode' => $request['mode'],
-            'className' => $request['className'],
-            'tagNames' => $request['tagNames'],
-            'description' => $request['description'],
-        ]);
+        // Field list derived from the shared schema, never restated: a field
+        // added to ruleFieldSchemas() (validated by the args) must reach the
+        // store too — `treatments` was silently dropped here once (#154).
+        $config = [];
+        foreach (array_keys(Schemas::ruleFieldSchemas()) as $key) {
+            $config[$key] = $request[$key];
+        }
+        $rule = Rules::create($config);
         if ($rule === null) {
             return new WP_Error('chronicler_db_error', 'Could not save the rule.', ['status' => 500]);
         }
@@ -371,7 +371,7 @@ final class Routes
     public function updateRule(WP_REST_Request $request)
     {
         $patch = [];
-        foreach (['pattern', 'flags', 'mode', 'className', 'tagNames', 'description'] as $key) {
+        foreach (array_keys(Schemas::ruleFieldSchemas()) as $key) {
             if ($request->get_param($key) !== null) {
                 $patch[$key] = $request->get_param($key);
             }

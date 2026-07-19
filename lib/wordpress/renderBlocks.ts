@@ -47,6 +47,7 @@ export function messageBlockAttributes(
     authorName: parts.authorName,
     realName:
       parts.realName && parts.realName !== parts.authorName ? parts.realName : "",
+    variants: parts.variants ?? [],
     authorColor: parts.authorColor,
     authorColorDark: parts.authorColorDark,
     avatarHtml: sanitizeFragment(parts.avatarHtml),

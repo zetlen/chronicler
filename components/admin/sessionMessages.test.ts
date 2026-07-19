@@ -183,6 +183,36 @@ describe("sessionMessageAttributes (the PUT /sessions/{id} messages[] shape)", (
     expect(marked).toBeDefined();
   });
 
+  it("treatment rules emit variants so the saved session round-trips them (#154)", () => {
+    const rules: RegexRule[] = [
+      {
+        id: "t1",
+        pattern: "\\(\\(ooc",
+        flags: "i",
+        mode: "treatment",
+        treatments: "ooc",
+        className: "",
+        enabled: true,
+      },
+    ];
+    const messages = sessionMessageAttributes(THREADS, makeCtx(rules));
+    const treated = messages.find(
+      (m) => typeof m.bodyHtml === "string" && (m.bodyHtml as string).includes("ooc: brb"),
+    )!;
+    expect(treated.variants).toEqual(["ooc"]);
+    // The treated author is renamed (U1 → "The Chronicler"), so realName rides
+    // along and the PHP renderer can swap the byline.
+    expect(treated.realName).toBe("Alice");
+    // Variants stay compose input — never baked into the serialized rootClass.
+    expect(String(treated.rootClass)).not.toContain("slk-msg--ooc");
+  });
+
+  it("omits variants entirely when no treatment applies", () => {
+    for (const m of sessionMessageAttributes(THREADS, makeCtx())) {
+      expect("variants" in m).toBe(false);
+    }
+  });
+
   it("promotes the surviving replies of a hidden parent, preserving order", () => {
     const rules: RegexRule[] = [
       { id: "r1", pattern: "Rolling to follow", flags: "i", mode: "hide", className: "", enabled: true },

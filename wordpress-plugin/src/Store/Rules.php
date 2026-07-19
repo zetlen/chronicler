@@ -35,6 +35,7 @@ final class Rules
         'mode' => 'hide',
         'className' => '',
         'tagNames' => '',
+        'treatments' => '',
         'description' => '',
     ];
 
@@ -231,7 +232,7 @@ final class Rules
     {
         $base = array_merge(self::DEFAULTS, array_intersect_key($base, self::DEFAULTS));
         $out = $base;
-        foreach (['pattern', 'flags', 'className', 'tagNames', 'description'] as $key) {
+        foreach (['pattern', 'flags', 'className', 'tagNames', 'treatments', 'description'] as $key) {
             if (array_key_exists($key, $input) && is_string($input[$key])) {
                 $out[$key] = $input[$key];
             }

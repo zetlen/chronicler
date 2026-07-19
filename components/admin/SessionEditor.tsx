@@ -142,6 +142,7 @@ function toRegexRule(rule: WpRule): RegexRule {
     mode: rule.mode,
     className: rule.className,
     tagNames: rule.tagNames,
+    treatments: rule.treatments,
     enabled: true,
   };
 }

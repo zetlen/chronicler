@@ -1,9 +1,10 @@
 import type { SlackMessage, ThreadedMessage } from "@/lib/transform/slackTypes";
+import { MESSAGE_VARIANTS, type MessageVariant } from "@/lib/transform/variants";
 
 /**
  * User-defined regex rules, evaluated against each message's raw Slack text.
  *
- * A rule has one of four modes:
+ * A rule has one of six modes:
  *   - "start"    — the transcript begins at the rule's first matching message:
  *                  everything before it is hidden, the marker itself is kept.
  *   - "end"      — the transcript ends at the rule's first matching message at
@@ -11,6 +12,11 @@ import type { SlackMessage, ThreadedMessage } from "@/lib/transform/slackTypes";
  *   - "hide"     — matching messages are hidden.
  *   - "addclass" — matching messages get the rule's CSS class(es), so custom
  *                  CSS can style (or animate, or hide) them.
+ *   - "wp-tag"   — a surviving match proposes the rule's WordPress tag(s) for
+ *                  the transcript post.
+ *   - "treatment" — matching messages get the rule's message treatment(s)
+ *                  ("ooc" / "important"): unlike "addclass", the variant is
+ *                  compose INPUT, so OOC's real-name byline swap fires.
  *
  * Composition: several "start" rules trim to the *latest* of their first
  * matches (each cut applies); several "end" rules trim to the *earliest*.
@@ -24,7 +30,7 @@ import type { SlackMessage, ThreadedMessage } from "@/lib/transform/slackTypes";
  * promotes to the top level.
  */
 
-export type RuleMode = "start" | "end" | "hide" | "addclass" | "wp-tag";
+export type RuleMode = "start" | "end" | "hide" | "addclass" | "wp-tag" | "treatment";
 
 export interface RegexRule {
   id: string;
@@ -40,6 +46,12 @@ export interface RegexRule {
    * Optional because rules persisted before this field existed lack it.
    */
   tagNames?: string;
+  /**
+   * Comma/space-separated message treatment name(s) from MESSAGE_VARIANTS;
+   * only meaningful for "treatment". Optional because rules persisted before
+   * this field existed lack it.
+   */
+  treatments?: string;
   enabled: boolean;
 }
 
@@ -47,6 +59,8 @@ export interface RegexRule {
 export interface RuleEffect {
   hidden: boolean;
   classes: string[];
+  /** Message treatments ("ooc"/"important") set by "treatment" rules. */
+  variants: string[];
 }
 
 export interface RuleOutcome {
@@ -127,6 +141,12 @@ export function tagTokens(tagNames: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/** Split a treatments field into known variant names, in vocabulary order. */
+export function treatmentTokens(treatments: string | undefined): MessageVariant[] {
+  const tokens = (treatments ?? "").toLowerCase().split(/[\s,]+/);
+  return MESSAGE_VARIANTS.filter((v) => tokens.includes(v));
+}
+
 /** Split a class-name field into attribute-safe tokens. */
 export function classTokens(className: string): string[] {
   return className
@@ -170,7 +190,7 @@ export function applyRules(
   const effectFor = (ts: string): RuleEffect => {
     let effect = effects.get(ts);
     if (!effect) {
-      effect = { hidden: false, classes: [] };
+      effect = { hidden: false, classes: [], variants: [] };
       effects.set(ts, effect);
     }
     return effect;
@@ -210,6 +230,16 @@ export function applyRules(
       case "wp-tag": {
         const names = tagTokens(rule.tagNames);
         if (names.length > 0) tagCandidates.push({ names, matches });
+        break;
+      }
+      case "treatment": {
+        const variants = treatmentTokens(rule.treatments);
+        for (const i of matches) {
+          const effect = effectFor(messages[i].ts);
+          for (const v of variants) {
+            if (!effect.variants.includes(v)) effect.variants.push(v);
+          }
+        }
         break;
       }
     }

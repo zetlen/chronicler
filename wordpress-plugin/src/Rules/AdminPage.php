@@ -73,6 +73,7 @@ final class AdminPage
             'hide' => 'Hide',
             'addclass' => 'Add CSS class',
             'wp-tag' => 'WordPress tag',
+            'treatment' => 'Treatment',
         ];
     }
 
@@ -85,6 +86,7 @@ final class AdminPage
             'hide' => 'matching messages are hidden',
             'addclass' => 'matching messages get the CSS class(es) below',
             'wp-tag' => 'a surviving match proposes the WordPress tag(s) below',
+            'treatment' => 'matching messages are marked with the treatment(s) below',
         ];
     }
 
@@ -188,6 +190,15 @@ final class AdminPage
             . '" spellcheck="false" autocomplete="off">';
         echo '<p class="description">Comma-separated WordPress tag names; proposed for the'
             . ' transcript post by the <em>WordPress tag</em> mode.</p>';
+        echo '</td></tr>';
+
+        echo '<tr><th scope="row"><label for="chronicler-rule-treatments">Treatment(s)</label></th><td>';
+        echo '<input type="text" id="chronicler-rule-treatments" name="' . esc_attr(self::FIELD)
+            . '[treatments]" class="regular-text code" value="' . esc_attr($config['treatments'])
+            . '" spellcheck="false" autocomplete="off" placeholder="ooc">';
+        echo '<p class="description">Comma-separated: <code>ooc</code> (out of character &#8212; shows the'
+            . ' author&#8217;s real name) and/or <code>important</code>; applied by the'
+            . ' <em>Treatment</em> mode.</p>';
         echo '</td></tr>';
 
         echo '<tr><th scope="row"><label for="chronicler-rule-description">Description</label></th><td>';

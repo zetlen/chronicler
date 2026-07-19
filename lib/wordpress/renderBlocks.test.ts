@@ -134,7 +134,7 @@ describe("renderConversationBlocks", () => {
     };
     const out = renderConversationBlocks([thread], {
       ...ctx(),
-      ruleEffects: new Map([["1", { hidden: true, classes: [] }]]),
+      ruleEffects: new Map([["1", { hidden: true, classes: [], variants: [] }]]),
     });
     const blocks = parseChroniclerBlocks(out);
     expect(blocks.find((b) => b.name === "thread")).toBeUndefined();
@@ -162,7 +162,7 @@ describe("renderConversationBlocks", () => {
   it("applies addclass rule classes inside the message html", () => {
     const out = renderConversationBlocks([solo("1", "tag me")], {
       ...ctx(),
-      ruleEffects: new Map([["1", { hidden: false, classes: ["highlight"] }]]),
+      ruleEffects: new Map([["1", { hidden: false, classes: ["highlight"], variants: [] }]]),
     });
     const [message] = parseChroniclerBlocks(out).filter((b) => b.name === "message");
     expect(String(message.attributes.rootClass)).toMatch(/\bhighlight\b/);

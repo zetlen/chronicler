@@ -444,13 +444,13 @@ describe("filters (hiddenKinds)", () => {
 
 describe("regex rule effects (ruleEffects)", () => {
   it("hides messages the rules marked hidden", () => {
-    const ruleEffects = new Map([["102.000", { hidden: true, classes: [] }]]);
+    const ruleEffects = new Map([["102.000", { hidden: true, classes: [], variants: [] }]]);
     const html = renderConversationFragment(allThreads, makeCtx({ ruleEffects }));
     expect(html).not.toContain("Deploybot");
   });
 
   it("promotes surviving replies when a rule hides the thread parent", () => {
-    const ruleEffects = new Map([["105.000", { hidden: true, classes: [] }]]);
+    const ruleEffects = new Map([["105.000", { hidden: true, classes: [], variants: [] }]]);
     const html = renderConversationFragment(allThreads, makeCtx({ ruleEffects }));
     expect(html).not.toContain("starting a thread");
     expect(html).toContain("a human reply");
@@ -459,7 +459,7 @@ describe("regex rule effects (ruleEffects)", () => {
 
   it("injects rule classes into the message root and they survive sanitization", () => {
     const ruleEffects = new Map([
-      ["100.000", { hidden: false, classes: ["session-note"] }],
+      ["100.000", { hidden: false, classes: ["session-note"], variants: [] }],
     ]);
     const html = renderConversationFragment(allThreads, makeCtx({ ruleEffects }));
     expect(html).toContain('class="slk-msg slk-msg--text session-note"');

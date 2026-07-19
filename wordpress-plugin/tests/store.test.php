@@ -39,7 +39,7 @@ check('message variants items are strings', ($message['properties']['variants'][
 
 // --- Schema vocabulary mirrors the app's. ---
 check('schemes mirror TranscriptScheme', Schemas::SCHEMES === ['light', 'dark', 'custom-light', 'custom-dark']);
-check('rule modes mirror RuleMode', Schemas::RULE_MODES === ['start', 'end', 'hide', 'addclass', 'wp-tag']);
+check('rule modes mirror RuleMode', Schemas::RULE_MODES === ['start', 'end', 'hide', 'addclass', 'wp-tag', 'treatment']);
 
 // --- Write-route args: the minimal-create contract. ---
 $create = Schemas::sessionCreateArgs();
@@ -90,11 +90,11 @@ check('normalize falls back to light on a junk scheme', Settings::normalizeChann
 $normalized = Rules::normalize([
     'id' => 'uuid-1', 'enabled' => true, // app-side fields, dropped
     'pattern' => '^#session', 'flags' => 'im', 'mode' => 'start',
-    'className' => 'x', 'tagNames' => 'one, two', 'description' => 'Session opener',
+    'className' => 'x', 'tagNames' => 'one, two', 'treatments' => 'ooc', 'description' => 'Session opener',
 ]);
 check('normalize keeps exactly the config fields', array_keys($normalized) === array_keys(Rules::DEFAULTS));
 check('normalize drops app-side id/enabled', !isset($normalized['id']) && !isset($normalized['enabled']));
-check('normalize preserves values', $normalized['pattern'] === '^#session' && $normalized['flags'] === 'im' && $normalized['tagNames'] === 'one, two');
+check('normalize preserves values', $normalized['pattern'] === '^#session' && $normalized['flags'] === 'im' && $normalized['tagNames'] === 'one, two' && $normalized['treatments'] === 'ooc');
 check('normalize defaults missing fields', Rules::normalize(['pattern' => 'x', 'mode' => 'hide'])['flags'] === 'i');
 check('normalize refuses an unknown mode', Rules::normalize(['mode' => 'explode'])['mode'] === 'hide');
 check(

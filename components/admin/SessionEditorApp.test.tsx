@@ -412,6 +412,7 @@ describe("create view", () => {
               mode: "end",
               className: "",
               tagNames: "",
+              treatments: "",
               description: "",
             },
           ],
