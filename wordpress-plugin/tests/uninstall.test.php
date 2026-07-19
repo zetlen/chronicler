@@ -251,8 +251,12 @@ check(
         && in_array('trash', $attachments_query['post_status'], true)
 );
 check(
-    'uninstall scrubs the mirror marker meta from the kept attachments',
-    $GLOBALS['chr_test_deleted_meta_keys'] === ['chronicler_mirror_key']
+    'uninstall scrubs all mirror marker meta from the kept attachments (#177)',
+    $GLOBALS['chr_test_deleted_meta_keys'] === [
+        'chronicler_mirror_key',
+        'chronicler_mirror_source',
+        'chronicler_mirror_sha256',
+    ]
 );
 
 // --- 6. the Slack-id user meta, every user --------------------------------------

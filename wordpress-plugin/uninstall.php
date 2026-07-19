@@ -46,7 +46,7 @@
  *  - mirrored Slack images that a PUBLISHED post still uses (post_parent set
  *    by the publish flow, Media\Mirror): transcripts survive uninstall, and
  *    deleting their images would 404 every inline <img> in content the site
- *    keeps. Only the chronicler_mirror_key marker meta is scrubbed.
+ *    keeps. Only the chronicler_mirror_* marker meta is scrubbed.
  *
  * Multisite: WordPress runs this file ONCE, in the deleting site's context —
  * there is no per-site invocation — so the per-site cleanup below loops
@@ -159,8 +159,10 @@ function chronicler_uninstall_site(): void
         wp_delete_attachment((int) $attachment_id, true);
     }
     //    The marker meta on the kept (publish-attached) mirrors is still
-    //    plugin data — scrub the key everywhere; the attachments remain.
+    //    plugin data — scrub all of it everywhere; the attachments remain.
     delete_post_meta_by_key(Chronicler\Media\Mirror::META_KEY);
+    delete_post_meta_by_key(Chronicler\Media\Mirror::META_SOURCE);
+    delete_post_meta_by_key(Chronicler\Media\Mirror::META_CONTENT);
 
     // 6. The mirror eviction cron (deactivation unschedules it too, but an
     //    uninstall can arrive with the event still pending).

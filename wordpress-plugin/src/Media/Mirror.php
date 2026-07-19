@@ -27,6 +27,16 @@ use WP_Error;
  *   another host, so it can't leak to CDN/gravatar hosts.
  * - The body must declare and measure under the size cap and be image/*.
  *
+ * Duplicate media detection (#177): the same image posted to Slack twice
+ * arrives at two DIFFERENT file URLs, so the URL key alone would store a
+ * second identical copy on every repost. Every stored mirror therefore also
+ * carries META_CONTENT (sha256 of the bytes); after a download, an existing
+ * mirror with the same content hash is ADOPTED — the new URL's key/source
+ * are recorded on it as extra meta rows and it is returned — instead of
+ * storing a duplicate file. backfill() (same daily cron event as evict())
+ * stamps content hashes onto mirrors that predate the feature so the lookup
+ * reaches the existing library too.
+ *
  * Consumer contract: a mirrored attachment that ends up used in a post MUST
  * be parented to it (media_handle_sideload $post_id, wp_update_post on
  * post_parent, or — for REST consumers like the #102 editor sidebar, which
@@ -53,10 +63,22 @@ final class Mirror
         'a.slack-edge.com',       // stock app/bot icons
     ];
 
-    /** Attachment meta holding the mirror key (hash of the source URL). */
+    /** Attachment meta holding the mirror key (hash of the source URL).
+     *  One row per adopted source URL — an attachment reused for identical
+     *  bytes (#177) carries several, and findByKey() matches any of them. */
     public const META_KEY = 'chronicler_mirror_key';
-    /** Attachment meta holding the original Slack URL, for debugging. */
+    /** Attachment meta holding the original Slack URL, for debugging.
+     *  Like META_KEY, one row per adopted source URL. */
     public const META_SOURCE = 'chronicler_mirror_source';
+    /** Attachment meta holding the sha256 of the stored bytes — the
+     *  duplicate-detection identity (#177). '' marks a mirror whose file is
+     *  gone: a real content key is 64 hex chars, so it never matches a
+     *  lookup, and the backfill scan never revisits the row. */
+    public const META_CONTENT = 'chronicler_mirror_sha256';
+    /** Mirrors content-hashed per backfill() run (daily), keeping one run's
+     *  disk reads bounded on large libraries. The
+     *  chronicler_mirror_backfill_batch filter can adjust it. */
+    public const BACKFILL_BATCH = 500;
 
     /** Max redirect hops to chase before giving up (each is re-checked). */
     public const MAX_REDIRECTS = 3;
@@ -111,6 +133,17 @@ final class Mirror
     public static function mirrorKey(string $url): string
     {
         return hash('sha256', $url);
+    }
+
+    /**
+     * Content identity of downloaded bytes (#177), stored in META_CONTENT:
+     * two Slack URLs serving the same image hash to the same key, which is
+     * what lets adoptDuplicate() reuse the first mirror instead of storing
+     * an identical copy.
+     */
+    public static function contentKey(string $bytes): string
+    {
+        return hash('sha256', $bytes);
     }
 
     /**
@@ -254,9 +287,11 @@ final class Mirror
      * The local media-library attachment {id, url} for a Slack-hosted image,
      * mirroring it on first fetch. Repeat calls for the same source URL
      * return the same attachment (keyed on META_KEY = mirrorKey($slackUrl))
-     * without touching the network. $alt becomes the attachment's alt text
-     * when provided (first fetch only — an existing mirror is returned
-     * untouched). The id exists for consumers that need an ATTACHMENT ID
+     * without touching the network, and a NEW source URL serving bytes the
+     * library already stores adopts that attachment instead of duplicating
+     * it (#177, see adoptDuplicate()). $alt becomes the attachment's alt
+     * text when provided (first fetch only — an existing or adopted mirror
+     * is returned untouched). The id exists for consumers that need an ATTACHMENT ID
      * (featured_media); they inherit the parenting obligation in the class
      * docblock.
      *
@@ -290,7 +325,14 @@ final class Mirror
         if (is_wp_error($image)) {
             return $image;
         }
-        $id = self::store($slackUrl, $key, $image['body'], $image['type'], $alt);
+        // #177: identical bytes already in the library (under a different
+        // source URL) reuse that attachment instead of storing a copy.
+        $contentKey = self::contentKey($image['body']);
+        $duplicate = self::adoptDuplicate($contentKey, $slackUrl, $key);
+        if ($duplicate !== null) {
+            return $duplicate;
+        }
+        $id = self::store($slackUrl, $key, $contentKey, $image['body'], $image['type'], $alt);
         if (is_wp_error($id)) {
             return $id;
         }
@@ -303,6 +345,59 @@ final class Mirror
             );
         }
         return ['id' => (int) $id, 'url' => $url];
+    }
+
+    /**
+     * Reuse an existing mirror whose stored bytes match $contentKey (#177).
+     * When a usable duplicate exists, the new source's key + URL are
+     * recorded on it as EXTRA meta rows (findByKey() matches any row, so
+     * the next fetch of this URL short-circuits before downloading) and its
+     * {id, url} is returned; null means the library holds no usable copy
+     * and the caller stores a fresh attachment. Re-adopting a key the
+     * attachment already carries adds nothing — a half-deleted attachment
+     * shadowing the key fast path re-downloads on every fetch, and those
+     * repeats must not pile up meta rows. The adopted attachment itself is
+     * otherwise untouched (same posture as the key fast path: alt text and
+     * parenting stay as they are).
+     *
+     * @return array{id: int, url: string}|null
+     */
+    public static function adoptDuplicate(string $contentKey, string $sourceUrl, string $urlKey): ?array
+    {
+        $id = self::findByContent($contentKey);
+        if ($id === 0) {
+            return null;
+        }
+        $url = wp_get_attachment_url($id);
+        if (!is_string($url) || $url === '') {
+            // A content row without a file (half-deleted attachment) is not
+            // a usable copy — same posture as the key fast path.
+            return null;
+        }
+        $known = get_post_meta($id, self::META_KEY);
+        $known = is_array($known) ? $known : [$known];
+        if (!in_array($urlKey, $known, true)) {
+            add_post_meta($id, self::META_KEY, $urlKey);
+            add_post_meta($id, self::META_SOURCE, esc_url_raw($sourceUrl));
+        }
+        return ['id' => $id, 'url' => $url];
+    }
+
+    /** Attachment id already storing bytes with this content key, or 0. */
+    private static function findByContent(string $contentKey): int
+    {
+        $ids = get_posts([
+            'post_type' => 'attachment',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'fields' => 'ids',
+            'meta_key' => self::META_CONTENT,
+            'meta_value' => $contentKey,
+            'no_found_rows' => true,
+        ]);
+        return (int) ($ids[0] ?? 0);
     }
 
     /** Attachment id already mirroring this key, or 0. */
@@ -432,6 +527,7 @@ final class Mirror
     private static function store(
         string $sourceUrl,
         string $key,
+        string $contentKey,
         string $body,
         string $type,
         string $alt
@@ -472,6 +568,7 @@ final class Mirror
         }
         update_post_meta($id, self::META_KEY, $key);
         update_post_meta($id, self::META_SOURCE, esc_url_raw($sourceUrl));
+        update_post_meta($id, self::META_CONTENT, $contentKey);
         if ($alt !== '') {
             update_post_meta($id, '_wp_attachment_image_alt', sanitize_text_field($alt));
         }
@@ -479,7 +576,7 @@ final class Mirror
     }
 
     /* ------------------------------------------------------------------ *
-     * Eviction (daily WP-Cron)
+     * Eviction + hash backfill (daily WP-Cron)
      * ------------------------------------------------------------------ */
 
     /**
@@ -492,6 +589,10 @@ final class Mirror
     public static function register(): void
     {
         add_action(self::CRON_HOOK, [self::class, 'evict']);
+        // Same event (renaming CRON_HOOK would orphan already-scheduled
+        // events on update), registered after evict so a run never hashes
+        // files eviction is about to delete.
+        add_action(self::CRON_HOOK, [self::class, 'backfill']);
         add_action('init', [self::class, 'ensureScheduled']);
     }
 
@@ -518,6 +619,37 @@ final class Mirror
     {
         foreach (self::evictableIds(time()) as $id) {
             wp_delete_attachment($id, true);
+        }
+    }
+
+    /**
+     * Stamp content hashes onto mirrors that predate #177, one bounded
+     * batch per daily cron run, so adoptDuplicate()'s lookup reaches the
+     * pre-existing library. A mirror whose file is gone is stamped '' (see
+     * META_CONTENT) so the NOT EXISTS scan never revisits it.
+     */
+    public static function backfill(): void
+    {
+        $limit = (int) apply_filters('chronicler_mirror_backfill_batch', self::BACKFILL_BATCH);
+        $ids = get_posts([
+            'post_type' => 'attachment',
+            'post_status' => 'inherit',
+            'posts_per_page' => $limit,
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'fields' => 'ids',
+            'meta_query' => [
+                ['key' => self::META_KEY, 'compare' => 'EXISTS'],
+                ['key' => self::META_CONTENT, 'compare' => 'NOT EXISTS'],
+            ],
+            'no_found_rows' => true,
+        ]);
+        foreach ($ids as $id) {
+            $path = get_attached_file((int) $id);
+            $hash = is_string($path) && $path !== '' && is_readable($path)
+                ? (string) hash_file('sha256', $path)
+                : '';
+            update_post_meta((int) $id, self::META_CONTENT, $hash);
         }
     }
 
