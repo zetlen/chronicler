@@ -94,14 +94,24 @@ function chronicler_sheets_get_detail(int $post_id, array $property): string {
     return $override !== '' ? $override : (string) ($property['detail'] ?? '');
 }
 
+/**
+ * Whether a character is a non-player character (#176). A real flag — the
+ * chr_npc meta, set by the NPC checkbox in the character editor — not the
+ * old `npc` post tag: rendering conditions on NPC status (stats withheld
+ * from non-editors, no "Played by", no Active box), and a free-form tag is
+ * too easy to typo or delete for gates like that. The tag carries no
+ * meaning anymore; it remains ordinary user content (tag archives).
+ */
+function chronicler_sheets_is_npc(int $post_id): bool {
+    return get_post_meta($post_id, 'chr_npc', true) === '1';
+}
+
 function chronicler_sheets_activate(): void {
     chronicler_sheets_register_types();
     // Roles + caps (player/gm + the character caps) — the same update-safe
     // grant that runs on init, called directly here so a fresh activation
     // seeds them immediately. Defined in sheets/caps.php (#162).
     chronicler_sheets_grant_caps();
-    // The npc grouping tag is seeded by chronicler_sheets_ensure_npc_term()
-    // (sheets/index.php) on init — update-safe, unlike this activation hook.
     flush_rewrite_rules();
 }
 

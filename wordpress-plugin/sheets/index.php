@@ -5,41 +5,20 @@
 // block themes, a template_include fallback on classic themes — so both
 // paths share one renderer.
 //
-// The PC/NPC split is the `npc` post tag (the mechanism the reporting
-// playtester proposed): tagged characters group under "NPCs", everything
-// else is a player character. Untagged installs render the flat grid they
-// had before, so the feature is opt-in per site. Order within each group is
-// menu_order (the "Order" field), then title.
+// The PC/NPC split is the chr_npc flag (#176 — the NPC checkbox on the
+// character editor; chronicler_sheets_is_npc lives in post-types.php with
+// the other meta helpers): flagged characters group under "NPCs",
+// everything else is a player character. Unflagged installs render the
+// flat grid they had before, so the feature is opt-in per site. Order
+// within each group is menu_order (the "Order" field), then title.
+//
+// Through 4.17 the split was the `npc` post tag (#66). The tag carries no
+// meaning anymore — recheck existing NPCs by hand — but it remains ordinary
+// user content (it still surfaces characters in tag archives).
 
 if (!defined('ABSPATH')) {
     exit;
 }
-
-/** The `npc` tag decides the grouping; everything untagged is a PC. */
-function chronicler_sheets_is_npc(int $post_id): bool {
-    return has_term('npc', 'post_tag', $post_id);
-}
-
-/**
- * Seed the `npc` tag so it autocompletes, with a description that documents
- * the convention on the Tags screen. Runs on init because activation hooks
- * don't fire on plugin UPDATES (the same trap chronicler.php's
- * Capabilities/Schema ensure() calls guard against) — and is gated by a
- * once-ever option rather than the version: a GM who deletes the term has
- * opted out, and re-seeding on every release would fight that choice.
- */
-function chronicler_sheets_ensure_npc_term(): void {
-    if (get_option('chronicler_sheets_npc_seeded')) {
-        return;
-    }
-    if (!term_exists('npc', 'post_tag')) {
-        wp_insert_term('npc', 'post_tag', [
-            'description' => 'Characters tagged "npc" are grouped under NPCs on the character index; untagged characters are player characters.',
-        ]);
-    }
-    update_option('chronicler_sheets_npc_seeded', '1');
-}
-add_action('init', 'chronicler_sheets_ensure_npc_term');
 
 /**
  * Pure: split ordered ids into [pcs, npcs], preserving order within each
@@ -70,6 +49,11 @@ function chronicler_sheets_render_index(): string {
         'orderby' => ['menu_order' => 'ASC', 'title' => 'ASC'],
         'fields' => 'ids',
     ]);
+    // fields=>'ids' skips core's cache priming; one warm-up query here beats
+    // a chr_npc meta read per character in the partition below.
+    if ($ids !== []) {
+        update_meta_cache('post', $ids);
+    }
     [$pcs, $npcs] = chronicler_sheets_partition_characters($ids, 'chronicler_sheets_is_npc');
 
     $html = '<div class="chr-index">';

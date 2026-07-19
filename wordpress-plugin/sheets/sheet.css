@@ -228,6 +228,16 @@
   border-left: 4px solid #c00;
   padding: 0.5rem 1rem;
 }
+/* Editor-only banner on NPC pages (#176): explains that the stat block
+   below it is withheld from visitors. */
+.chr-sheet__npc-note {
+  font-size: 0.9rem;
+  font-style: italic;
+  opacity: 0.85;
+  background: rgba(153, 117, 0, 0.05);
+  border-left: 4px solid var(--chr-accent);
+  padding: 0.5rem 1rem;
+}
 .chr-sheet button:disabled,
 .chr-sheet input:disabled,
 .chr-sheet select:disabled,

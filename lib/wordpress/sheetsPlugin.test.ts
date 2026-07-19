@@ -24,6 +24,16 @@ describe("sheets post types and permissions", () => {
     expect(php).toContain("save_post_chr_character");
   });
 
+  it("treats NPC as a real chr_npc meta flag, not the legacy tag (#176)", () => {
+    expect(php).toContain("function chronicler_sheets_is_npc(");
+    expect(php).toContain("chr_npc");
+    // The character index groups on the flag reader; nothing reads the old
+    // `npc` tag anymore.
+    const index = files["sheets/index.php"];
+    expect(index).toContain("'chronicler_sheets_is_npc'");
+    expect(index).not.toContain("has_term(");
+  });
+
   it("resolves property details as character override over template default", () => {
     expect(php).toContain("function chronicler_sheets_get_detail(");
     expect(php).toContain("chr_detail_");
@@ -125,6 +135,13 @@ describe("sheets admin", () => {
   it("gives characters an Active meta box", () => {
     expect(php).toContain("add_meta_box");
     expect(php).toContain("chr_active");
+  });
+
+  it("gives characters an NPC meta box that clears Active status (#176)", () => {
+    expect(php).toContain("'chronicler-npc'");
+    expect(php).toContain("chronicler_npc_nonce");
+    // Becoming an NPC drops chr_active even when the pre-NPC form posted it.
+    expect(php).toContain("delete_post_meta($post_id, 'chr_active')");
   });
 
   it("renders a schema-generated Stat Block meta box saved through the validator", () => {
@@ -261,6 +278,17 @@ describe("sheets front-end render", () => {
     expect(r).toContain("wpautop(wp_kses_post(");
     // Rich text makes the display badge a raw-markup echo; longtext skips it.
     expect(r).toContain("$property['type'] === 'longtext'");
+  });
+
+  it("withholds NPC stat blocks from non-editors on page and REST alike (#176)", () => {
+    const r = files["sheets/render.php"];
+    expect(r).toContain("chronicler_sheets_is_npc(");
+    expect(r).toContain("chr-sheet--npc");
+    expect(r).toContain("chr-sheet__npc-note");
+    // The public-read sheet endpoint applies the same gate, or the page-side
+    // hiding would be theater.
+    const rest = files["sheets/rest.php"];
+    expect(rest).toContain("chronicler_sheets_is_npc(");
   });
 });
 

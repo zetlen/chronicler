@@ -65,6 +65,14 @@ if (!function_exists('sanitize_text_field')) {
 if (!function_exists('sanitize_textarea_field')) {
     function sanitize_textarea_field($s) { return is_string($s) ? trim($s) : $s; }
 }
+// The meta-box save paths (#176 NPC/Active) clear flags with delete_post_meta;
+// mirror it over the shared map so reads observe the deletion.
+if (!function_exists('delete_post_meta')) {
+    function delete_post_meta($post_id, $key, $value = '') {
+        unset($GLOBALS['chr_test_post_meta'][$post_id][$key]);
+        return true;
+    }
+}
 // Records which property ids reached persistence (so a test can prove a forged
 // present-flag for a GM-only field never gets written) AND writes back to the
 // value map (so a later read — e.g. the rule engine — sees the new value).
@@ -343,4 +351,68 @@ check(
     is_array($chr_echo_resp) && isset($chr_echo_resp['derived'])
         && count($chr_echo_resp['derived']) === 1
         && $chr_echo_resp['derived'][0]['prop'] === 'strength_mod' && $chr_echo_resp['derived'][0]['value'] === 2
+);
+
+// --- NPC (#176), read surface: the public-read sheet endpoint withholds the
+// whole stat block — properties AND layout — from callers who can't edit the
+// character, mirroring the page render. Hiding the markup there would be
+// theater if the values still flowed here. ---
+$GLOBALS['chr_test_template'] = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Test', 'version' => 1,
+    'properties' => [['id' => 'str', 'label' => 'Strength', 'type' => 'number', 'min' => 0, 'max' => 5]],
+    'layout' => [['section' => 'Stats', 'properties' => ['str']]],
+]));
+check('NPC REST fixture parses', is_array($GLOBALS['chr_test_template']));
+$GLOBALS['chr_test_values'] = ['str' => 3];
+$GLOBALS['chr_test_post_meta'][7]['chr_npc'] = '1';
+
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+$rest_npc_public = chronicler_sheets_rest_get_sheet($req);
+check('REST NPC public: no properties served', is_array($rest_npc_public) && $rest_npc_public['properties'] === []);
+check('REST NPC public: layout emptied to match', is_array($rest_npc_public) && $rest_npc_public['layout'] === []);
+check('REST NPC public: masthead identity (title) still served', is_array($rest_npc_public) && $rest_npc_public['title'] !== '');
+
+$GLOBALS['chr_test_can_edit'] = true;
+$rest_npc_editor = chronicler_sheets_rest_get_sheet($req);
+check('REST NPC editor: properties served', in_array('str', $prop_ids($rest_npc_editor), true));
+check('REST NPC editor: layout intact', in_array('str', $layout_ids($rest_npc_editor), true));
+
+// --- NPC (#176), wp-admin boxes: the NPC checkbox round-trips chr_npc, and
+// the Active box disables itself (posting nothing) on an NPC — with the save
+// handler clearing chr_active even when a pre-NPC form still posted it. ---
+ob_start();
+chronicler_sheets_render_npc_box($post);
+$npc_box = ob_get_clean();
+check('NPC box: renders the chr_npc checkbox, checked for an NPC', strpos($npc_box, 'name="chr_npc"') !== false && strpos($npc_box, 'checked') !== false);
+
+ob_start();
+chronicler_sheets_render_active_box($post);
+$active_box_npc = ob_get_clean();
+check('Active box on an NPC: disabled', strpos($active_box_npc, 'disabled') !== false);
+check('Active box on an NPC: posts no chr_active', strpos($active_box_npc, 'name="chr_active"') === false);
+
+$GLOBALS['chr_test_post_meta'][7]['chr_active'] = '1';
+$_POST['chronicler_active_nonce'] = 'ok';
+$_POST['chr_active'] = '1'; // the pre-NPC form still had the box enabled
+chronicler_sheets_save_active_box(7);
+check('Active save on an NPC: chr_active cleared despite being posted', !isset($GLOBALS['chr_test_post_meta'][7]['chr_active']));
+unset($_POST['chronicler_active_nonce'], $_POST['chr_active']);
+
+$_POST['chronicler_npc_nonce'] = 'ok';
+unset($_POST['chr_npc']);
+chronicler_sheets_save_npc_box(7);
+check('NPC save: unchecking clears the flag', !isset($GLOBALS['chr_test_post_meta'][7]['chr_npc']));
+$_POST['chr_npc'] = '1';
+chronicler_sheets_save_npc_box(7);
+check('NPC save: checking sets the flag', ($GLOBALS['chr_test_post_meta'][7]['chr_npc'] ?? '') === '1');
+unset($_POST['chronicler_npc_nonce'], $_POST['chr_npc'], $GLOBALS['chr_test_post_meta'][7]);
+
+// Back on a PC, the Active box is the ordinary enabled checkbox again.
+ob_start();
+chronicler_sheets_render_active_box($post);
+$active_box_pc = ob_get_clean();
+check(
+    'Active box on a PC: enabled input posts chr_active',
+    strpos($active_box_pc, 'name="chr_active"') !== false && strpos($active_box_pc, 'disabled') === false
 );

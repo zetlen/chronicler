@@ -123,12 +123,20 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
     // but still loses gm_only ones.
     $is_gm = current_user_can('edit_others_chr_characters');
     $can_edit = current_user_can('edit_post', $post->ID);
+    // An NPC (#176) withholds its whole stat block from callers who can't
+    // edit it, mirroring the front-end render — hiding the markup on the
+    // page would be theater if this public-read endpoint still served the
+    // values. Editors get the sheet as usual.
+    $is_npc = chronicler_sheets_is_npc($post->ID);
     $properties = [];
     foreach ($template['properties'] as $id => $property) {
         if (!$is_gm && chronicler_sheets_is_gm_only($property)) {
             continue;
         }
         if (!$can_edit && chronicler_sheets_is_owner_only($property)) {
+            continue;
+        }
+        if ($is_npc && !$can_edit) {
             continue;
         }
         $value = chronicler_sheets_get_value($post->ID, $property);
@@ -142,7 +150,12 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
         'title' => get_the_title($post),
         'canEdit' => $can_edit,
         'system' => $template['system'],
-        'layout' => chronicler_sheets_visible_layout($template, $is_gm, $can_edit),
+        // The NPC gate empties the layout the same way it empties the
+        // property list, so the two stay in agreement (and the withheld
+        // property IDS stay hidden too, not just their values).
+        'layout' => $is_npc && !$can_edit
+            ? []
+            : chronicler_sheets_visible_layout($template, $is_gm, $can_edit),
         'properties' => $properties,
     ];
 }

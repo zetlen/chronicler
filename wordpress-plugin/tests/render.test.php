@@ -141,6 +141,14 @@ if (!function_exists('chronicler_sheets_get_value')) {
 if (!function_exists('chronicler_sheets_get_detail')) {
     function chronicler_sheets_get_detail($post_id, array $property) { return ''; }
 }
+if (!function_exists('chronicler_sheets_is_npc')) {
+    // Mirrors post-types.php's reader over the shared harness meta map
+    // (the same one template-store.test.php's get_post_meta stub reads),
+    // so suites drive NPC status the way production does: chr_npc = '1'.
+    function chronicler_sheets_is_npc(int $post_id): bool {
+        return ($GLOBALS['chr_test_post_meta'][$post_id]['chr_npc'] ?? '') === '1';
+    }
+}
 
 require __DIR__ . '/../sheets/render.php';
 
@@ -483,3 +491,43 @@ $sheet_unlocked = chronicler_sheets_the_content('INTRO');
 check('password satisfied: the sheet renders again', strpos($sheet_unlocked, 'data-chronicler-sheet') !== false);
 check('password satisfied: the content rides along as the intro', strpos($sheet_unlocked, 'INTRO') !== false);
 unset($GLOBALS['chr_test_password_required']);
+
+// --- NPC pages (#176): stats are kept, not displayed. Viewers who can't
+// edit the character get a lore page — portrait, name, tagline, intro —
+// with the whole stat block (masthead traits AND body sections) withheld,
+// and "Played by" gone for every viewer. Editors keep the full sheet plus
+// a note explaining why their page differs from what visitors see. ---
+$GLOBALS['chr_test_template'] = $masthead_template;
+$GLOBALS['chr_test_values'] = ['playbook' => 'The Chosen', 'grit' => 3];
+
+// Control: an ordinary PC still credits its player and gets no NPC class.
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+$pc_page = chronicler_sheets_render_sheet(11, 'INTRO');
+check('PC: "Played by" renders', strpos($pc_page, 'Played by Alice') !== false);
+check('PC: no chr-sheet--npc class', strpos($pc_page, 'chr-sheet--npc') === false);
+check('PC: no NPC editor note', strpos($pc_page, 'chr-sheet__npc-note') === false);
+
+$GLOBALS['chr_test_post_meta'][11]['chr_npc'] = '1';
+$npc_public = chronicler_sheets_render_sheet(11, 'INTRO');
+check('NPC public: "Played by" omitted', strpos($npc_public, 'Played by') === false);
+check('NPC public: masthead traits withheld', strpos($npc_public, 'The Chosen') === false);
+check(
+    'NPC public: body sections withheld entirely',
+    strpos($npc_public, '<h2>Stats</h2>') === false && strpos($npc_public, 'data-prop=') === false
+);
+check('NPC public: masthead still renders', strpos($npc_public, 'chr-masthead__name') !== false);
+check('NPC public: intro still renders', strpos($npc_public, 'INTRO') !== false);
+check('NPC public: page carries the chr-sheet--npc class', strpos($npc_public, 'chr-sheet--npc') !== false);
+check('NPC public: no editor note for non-editors', strpos($npc_public, 'chr-sheet__npc-note') === false);
+
+$GLOBALS['chr_test_is_gm'] = true;
+$GLOBALS['chr_test_can_edit'] = true;
+$npc_editor = chronicler_sheets_render_sheet(11, 'INTRO');
+check(
+    'NPC editor: the full stat block renders',
+    strpos($npc_editor, '<h2>Stats</h2>') !== false && strpos($npc_editor, 'The Chosen') !== false
+);
+check('NPC editor: the note explains the visitor view', strpos($npc_editor, 'chr-sheet__npc-note') !== false);
+check('NPC editor: "Played by" still omitted', strpos($npc_editor, 'Played by') === false);
+unset($GLOBALS['chr_test_post_meta'][11]);

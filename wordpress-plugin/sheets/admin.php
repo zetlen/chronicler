@@ -173,14 +173,45 @@ function chronicler_sheets_render_configurator(): void {
     echo '</div>';
 }
 
-// --- Character "Active" meta box -------------------------------------------
+// --- Character "NPC" and "Active" meta boxes --------------------------------
 
 function chronicler_sheets_add_meta_boxes(): void {
+    add_meta_box('chronicler-npc', 'NPC', 'chronicler_sheets_render_npc_box', 'chr_character', 'side');
     add_meta_box('chronicler-active', 'Active Character', 'chronicler_sheets_render_active_box', 'chr_character', 'side');
     // The tagline field under the title IS the excerpt; don't show it twice.
     remove_meta_box('postexcerpt', 'chr_character', 'normal');
 }
 add_action('add_meta_boxes_chr_character', 'chronicler_sheets_add_meta_boxes');
+
+/** The chr_npc flag (#176) — see chronicler_sheets_is_npc() in post-types.php. */
+function chronicler_sheets_render_npc_box(WP_Post $post): void {
+    wp_nonce_field('chronicler_npc_box', 'chronicler_npc_nonce');
+    echo '<label><input type="checkbox" name="chr_npc" value="1" '
+        . checked(chronicler_sheets_is_npc($post->ID), true, false) . '> '
+        . 'Non-player character</label>';
+    echo '<p class="description">An NPC keeps its stats here, but its public page shows only the portrait, name, tagline, and intro — no stat block, no &ldquo;Played by&rdquo;.</p>';
+}
+
+/**
+ * Saves at priority 7 — ahead of the Active box (9) — so a save that just
+ * flagged a character NPC clears chr_active in the same request (the
+ * Active handler below re-checks NPC status).
+ */
+function chronicler_sheets_save_npc_box(int $post_id): void {
+    if (
+        !isset($_POST['chronicler_npc_nonce'])
+        || !wp_verify_nonce($_POST['chronicler_npc_nonce'], 'chronicler_npc_box')
+        || !current_user_can('edit_post', $post_id)
+    ) {
+        return;
+    }
+    if (isset($_POST['chr_npc'])) {
+        update_post_meta($post_id, 'chr_npc', '1');
+    } else {
+        delete_post_meta($post_id, 'chr_npc');
+    }
+}
+add_action('save_post_chr_character', 'chronicler_sheets_save_npc_box', 7);
 
 // --- Masthead fields: tagline under the title, short intro editor -----------
 
@@ -245,6 +276,15 @@ add_filter('wp_editor_settings', 'chronicler_sheets_shrink_content_editor', 10, 
 
 function chronicler_sheets_render_active_box(WP_Post $post): void {
     wp_nonce_field('chronicler_active_box', 'chronicler_active_nonce');
+    // Disabled rather than hidden for an NPC (#176): the box vanishing when
+    // the NPC checkbox goes on would read as a lost setting, and disabled
+    // inputs post nothing, so the save handler below clears the flag. The
+    // nonce still renders so that clear actually runs.
+    if (chronicler_sheets_is_npc($post->ID)) {
+        echo '<label><input type="checkbox" disabled> This player\'s active character</label>';
+        echo '<p class="description">An NPC isn\'t played, so it can\'t be anyone\'s active character. Uncheck NPC (and save) to re-enable this.</p>';
+        return;
+    }
     $active = get_post_meta($post->ID, 'chr_active', true) === '1';
     echo '<label><input type="checkbox" name="chr_active" value="1" ' . checked($active, true, false) . '> '
         . 'This player\'s active character</label>';
@@ -256,6 +296,14 @@ function chronicler_sheets_save_active_box(int $post_id): void {
         || !wp_verify_nonce($_POST['chronicler_active_nonce'], 'chronicler_active_box')
         || !current_user_can('edit_post', $post_id)
     ) {
+        return;
+    }
+    // NPCs are never an active character (#176). The NPC box saved at
+    // priority 7, so a save that just checked NPC lands here with the flag
+    // already set and drops chr_active even though the (pre-NPC) form still
+    // posted it checked.
+    if (chronicler_sheets_is_npc($post_id)) {
+        delete_post_meta($post_id, 'chr_active');
         return;
     }
     if (isset($_POST['chr_active'])) {

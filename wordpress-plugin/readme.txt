@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.17.0
+Stable tag: 4.18.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.18.0 =
+* NPC is a real flag now: a checkbox on the character editor (replacing the old `npc` tag convention — recheck existing NPCs by hand). NPC pages show only the portrait, name, tagline, and intro; the stat block and "Played by" are hidden from everyone who can't edit the character, on the page and the public REST sheet alike. Editors still see the full sheet, with a note explaining what visitors see. The Active Character box is disabled for NPCs, and flagging a character NPC clears its active status.
 
 = 4.17.0 =
 * Session autosave is sturdier: saves never overlap (so a slow save can no longer overwrite a newer one), a failed save retries on its own with backoff instead of waiting for your next edit, a hung save times out instead of wedging autosave, and navigating away flushes pending edits.

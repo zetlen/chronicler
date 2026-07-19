@@ -36,9 +36,10 @@
  *  - the chronicler_slack_user_id user meta         (every user)
  *
  * Deliberately NOT touched:
- *  - the `npc` post_tag term (sheets/index.php): tags are shared with the
- *    site's regular posts, so deleting the term could untag content that
- *    isn't ours; an orphaned tag term is inert.
+ *  - the `npc` post_tag term (seeded through 4.17; the flag is chr_npc post
+ *    meta now, #176, which rides out with the posts above): tags are shared
+ *    with the site's regular posts, so deleting the term could untag content
+ *    that isn't ours; an orphaned tag term is inert.
  *  - attachments users uploaded themselves (character portraits, Bio images
  *    — no Mirror meta): deleting a user's Media Library assets is not ours
  *    to do; post deletion re-parents them and they remain ordinary media.
@@ -92,6 +93,8 @@ function chronicler_uninstall_site(): void
             Chronicler\Store\Schema::OPTION,
             'chronicler_sheets_caps_version',
             'chronicler_active_template',
+            // Stamped the retired tag-seeding (#66, through 4.17; the flag
+            // is chr_npc meta since #176) — older installs still carry it.
             'chronicler_sheets_npc_seeded',
         ] as $option
     ) {

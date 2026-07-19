@@ -3,22 +3,22 @@
 // the tag-archive orderby prepend. sheets/index.php leans on WordPress like
 // render.php does, so the handful of extra functions it touches are stubbed
 // here (render.test.php, included earlier by run.php, already stubbed the
-// escaping/title/thumbnail set). Included by run.php after render.test.php.
+// escaping/title/thumbnail set — and chronicler_sheets_is_npc, which reads
+// the shared chr_test_post_meta map). Included by run.php after
+// render.test.php.
 
-// Index query + taxonomy lookups, driven by test globals. Args are recorded
-// so suites can assert query SCOPE (uninstall.test.php: post_type/status/
-// meta_key), not just that results were consumed — a stub that swallows its
-// args can't catch a widened or typo'd query (#173 review).
+// Index query, driven by test globals. Args are recorded so suites can
+// assert query SCOPE (uninstall.test.php: post_type/status/meta_key), not
+// just that results were consumed — a stub that swallows its args can't
+// catch a widened or typo'd query (#173 review).
 if (!function_exists('get_posts')) {
     function get_posts($args = []) {
         $GLOBALS['chr_test_get_posts_calls'][] = $args;
         return $GLOBALS['chr_test_index_ids'] ?? [];
     }
 }
-if (!function_exists('has_term')) {
-    function has_term($term, $taxonomy, $post = null) {
-        return in_array($post, $GLOBALS['chr_test_npc_ids'] ?? [], true);
-    }
+if (!function_exists('update_meta_cache')) {
+    function update_meta_cache($type, $ids) { return []; }
 }
 if (!function_exists('get_permalink')) {
     function get_permalink($id = 0) { return 'http://test.local/?chr=' . $id; }
@@ -42,19 +42,15 @@ if (!function_exists('update_option')) {
         return true;
     }
 }
-if (!function_exists('term_exists')) {
-    function term_exists($term, $taxonomy = '') {
-        return in_array($term, $GLOBALS['chr_test_existing_terms'] ?? [], true) ? 5 : null;
-    }
-}
-if (!function_exists('wp_insert_term')) {
-    function wp_insert_term($term, $taxonomy, $args = []) {
-        $GLOBALS['chr_test_inserted_terms'][] = $term;
-        return ['term_id' => 99, 'term_taxonomy_id' => 99];
-    }
-}
-
 require __DIR__ . '/../sheets/index.php';
+
+/** NPC status is the chr_npc flag (#176); seed it the way production reads it. */
+function chr_test_seed_npcs(array $ids): void {
+    $GLOBALS['chr_test_post_meta'] = [];
+    foreach ($ids as $id) {
+        $GLOBALS['chr_test_post_meta'][$id]['chr_npc'] = '1';
+    }
+}
 
 // --- partition ---------------------------------------------------------------
 
@@ -71,7 +67,7 @@ check('partition of nothing is two empty groups', $pcs === [] && $npcs === []);
 // --- index rendering: both kinds present → two headed sections ---------------
 
 $GLOBALS['chr_test_index_ids'] = [10, 20, 30, 40];
-$GLOBALS['chr_test_npc_ids'] = [20, 40];
+chr_test_seed_npcs([20, 40]);
 $html = chronicler_sheets_render_index();
 
 check('index: PC section heading rendered', strpos($html, '>Player Characters<') !== false);
@@ -93,46 +89,20 @@ check('index: PC cards do not leak into the NPC section', strpos($npc_section, '
 
 // --- index rendering: one kind only → flat grid, no headings ------------------
 
-$GLOBALS['chr_test_npc_ids'] = [];
+chr_test_seed_npcs([]);
 $flat = chronicler_sheets_render_index();
 check('index: no NPCs → no group headings', strpos($flat, '>Player Characters<') === false && strpos($flat, '>NPCs<') === false);
 check('index: no NPCs → all cards still render', substr_count($flat, 'chr-index__card') === 4);
 
-$GLOBALS['chr_test_npc_ids'] = [10, 20, 30, 40];
+chr_test_seed_npcs([10, 20, 30, 40]);
 $all_npc = chronicler_sheets_render_index();
 check('index: all NPCs → flat grid too', strpos($all_npc, '>NPCs<') === false);
 
 $GLOBALS['chr_test_index_ids'] = [];
 check('index: no characters → empty-state message', strpos(chronicler_sheets_render_index(), 'chr-index__empty') !== false);
 
-// --- npc term seeding: once ever, update-safe, deletion-respecting ------------
-
-$GLOBALS['chronicler_test_options'] = [];
-$GLOBALS['chr_test_existing_terms'] = [];
-$GLOBALS['chr_test_inserted_terms'] = [];
-
-chronicler_sheets_ensure_npc_term();
-check('seed: fresh site inserts the npc term', $GLOBALS['chr_test_inserted_terms'] === ['npc']);
-check('seed: the once-ever flag is set', !empty($GLOBALS['chronicler_test_options']['chronicler_sheets_npc_seeded']));
-
-chronicler_sheets_ensure_npc_term();
-check('seed: second run is a no-op (idempotent)', $GLOBALS['chr_test_inserted_terms'] === ['npc']);
-
-// A GM who deletes the term has opted out; the flag keeps us from re-seeding.
-$GLOBALS['chr_test_existing_terms'] = [];
-chronicler_sheets_ensure_npc_term();
-check('seed: a deleted term stays deleted', $GLOBALS['chr_test_inserted_terms'] === ['npc']);
-
-// A site where the term already exists (hand-created) is flagged, not re-inserted.
-$GLOBALS['chronicler_test_options'] = [];
-$GLOBALS['chr_test_existing_terms'] = ['npc'];
-$GLOBALS['chr_test_inserted_terms'] = [];
-chronicler_sheets_ensure_npc_term();
-check('seed: hand-created term is respected', $GLOBALS['chr_test_inserted_terms'] === []);
-check('seed: hand-created term still sets the flag', !empty($GLOBALS['chronicler_test_options']['chronicler_sheets_npc_seeded']));
-
-// Leave the shared options global clean for settings.test.php downstream.
-$GLOBALS['chronicler_test_options'] = [];
+// Leave the shared meta map clean for surfaces.test.php downstream.
+chr_test_seed_npcs([]);
 
 // --- tag-archive orderby: characters first, original order intact -------------
 

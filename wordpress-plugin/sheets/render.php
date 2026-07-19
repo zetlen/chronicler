@@ -31,9 +31,11 @@ add_filter('the_content', 'chronicler_sheets_the_content');
 function chronicler_sheets_render_masthead(int $post_id, array $trait_props = []): string {
     $html = '<header class="chr-masthead">';
     // The author IS the owning player (that's the permission model), so the
-    // attribution the theme byline used to muddle reads plainly here.
+    // attribution the theme byline used to muddle reads plainly here. Except
+    // NPCs (#176): nobody plays them, so the line is noise — omitted for
+    // every viewer, the GM included.
     $player = get_the_author_meta('display_name', (int) get_post_field('post_author', $post_id));
-    if ($player !== '') {
+    if ($player !== '' && !chronicler_sheets_is_npc($post_id)) {
         $html .= '<span class="chr-masthead__player">Played by ' . esc_html($player) . '</span>';
     }
     $thumb_id = get_post_thumbnail_id($post_id);
@@ -138,6 +140,14 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
     // (who can edit their own sheet) and the public, and the gate drops the
     // markup rather than hiding it, so the content never reaches their page.
     $is_gm = current_user_can('edit_others_chr_characters');
+    // An NPC (#176) HAS stats but doesn't display them: for viewers who
+    // can't edit the character, the whole stat block — masthead traits and
+    // body sections alike — is withheld below, leaving a lore page of
+    // portrait, name, tagline, and intro. Editors (the GM; NPCs are
+    // GM-authored) keep the full sheet, flagged as theirs alone by the note
+    // under the masthead. rest.php applies the same gate to the public
+    // sheet endpoint, so the withheld values don't leak there either.
+    $is_npc = chronicler_sheets_is_npc($post_id);
 
     $boot = [
         'restUrl' => esc_url_raw(rest_url('chronicler/v1/')),
@@ -171,6 +181,12 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
             if (!$can_edit && chronicler_sheets_is_owner_only($property)) {
                 continue;
             }
+            // On an NPC, EVERY property is that audience (#176): stats are
+            // kept, not displayed. Same drop-the-markup rule as the flags
+            // above.
+            if ($is_npc && !$can_edit) {
+                continue;
+            }
             if (!chronicler_sheets_is_always_show($property)
                 && chronicler_sheets_is_unfilled($property, chronicler_sheets_get_value($post_id, $property))) {
                 continue;
@@ -195,10 +211,18 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
     // Classic themes implement alignwide with NEGATIVE margins (overflowing
     // the viewport), so there the sheet just fills the theme's container.
     $wide = wp_is_block_theme() ? ' alignwide' : '';
-    $html = '<article class="chr-sheet' . $wide . '" data-chronicler-sheet>';
+    // chr-sheet--npc marks NPC pages for site CSS regardless of viewer.
+    $npc_class = $is_npc ? ' chr-sheet--npc' : '';
+    $html = '<article class="chr-sheet' . $wide . $npc_class . '" data-chronicler-sheet>';
     $html .= '<script type="application/json" id="chronicler-sheet-boot">' . wp_json_encode($boot) . '</script>';
     $html .= '<div class="chr-sheet__error" hidden></div>';
     $html .= chronicler_sheets_render_masthead($post_id, $trait_props);
+    // Tell the editor why their page looks different from everyone else's —
+    // without this, stats that render fine for the GM but vanish for players
+    // read as a caching bug, not a feature.
+    if ($is_npc && $can_edit) {
+        $html .= '<p class="chr-sheet__npc-note">Non-player character: visitors see only the portrait, name, tagline, and intro. The stats below are visible to you because you can edit this character.</p>';
+    }
     // The unstructured rich block (post content) sits between header and stats.
     if (trim($intro) !== '') {
         $html .= '<div class="chr-sheet__intro">' . $intro . '</div>';

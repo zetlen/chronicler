@@ -107,7 +107,7 @@ function chronicler_sheets_grant_caps(): void {
  * updates, so an existing install would never receive a role or a cap added in
  * a newer version without this. One autoloaded option read per request;
  * re-grants only when the version changes, and grant is idempotent. Mirrors
- * Chronicler\Capabilities::ensure() and chronicler_sheets_ensure_npc_term().
+ * Chronicler\Capabilities::ensure().
  */
 function chronicler_sheets_ensure_caps(): void {
     if (get_option('chronicler_sheets_caps_version') !== CHRONICLER_VERSION) {
