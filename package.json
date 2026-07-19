@@ -6,6 +6,7 @@
   },
   "scripts": {
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:php": "node scripts/test-php.mjs",
