@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MessageKind, RenderContext, TranscriptScheme } from "@/lib/transform/types";
+import type { TranscriptScheme } from "@/lib/transform/types";
 import type { UserOverride } from "@/lib/transform/directory";
-import { createDirectory } from "@/lib/transform/directory";
 import { assignDistinctColors, colorForName } from "@/lib/transform/color";
-import { renderConversationFragment } from "@/lib/transform/renderDocument";
 import { dialogueCss, customSchemeTemplate } from "@/lib/transform/styles";
 import { sanitizeCss } from "@/lib/transform/sanitize";
+import { EMPTY_RULE_OUTCOME, type RegexRule } from "@/lib/transform/rules";
 import {
-  applyRules,
-  EMPTY_RULE_OUTCOME,
-  type RegexRule,
-} from "@/lib/transform/rules";
-import { sessionMessageAttributes } from "@/lib/wordpress/renderBlocks";
+  SessionProcessor,
+  type ProcessedSession,
+} from "@/lib/session/SessionProcessor";
+import { toPreviewHtml } from "@/lib/session/toPreviewHtml";
+import {
+  resolveRegexRules,
+  sessionRenderOptions,
+} from "@/components/admin/sessionRender";
 import { Group } from "@/components/Group";
 import { CustomCssEditor } from "@/components/CustomCssEditor";
 import { getBoot } from "@/components/admin/apiFetch";
@@ -35,7 +37,6 @@ import {
 } from "@/components/admin/slackFetch";
 import { navigateToSession } from "@/components/admin/sessionRoute";
 import { RulesPanel } from "@/components/admin/RulesPanel";
-import { composeSavedFragment } from "@/components/admin/savedMessages";
 import {
   authorizePreviewImages,
   sessionImageProxyBase,
@@ -123,29 +124,6 @@ function collectPresentUsers(data: SessionRawData): PresentUser[] {
 
 const isCustomScheme = (scheme: TranscriptScheme): boolean =>
   scheme === "custom-light" || scheme === "custom-dark";
-
-function hiddenKindsFor(controls: SessionControls): Set<MessageKind> {
-  const hidden = new Set<MessageKind>();
-  if (controls.hideSystem) hidden.add("system");
-  if (controls.hideBots) {
-    hidden.add("bot_message");
-    hidden.add("bot_reply");
-  }
-  return hidden;
-}
-
-function toRegexRule(rule: WpRule): RegexRule {
-  return {
-    id: String(rule.id),
-    pattern: rule.pattern,
-    flags: rule.flags,
-    mode: rule.mode,
-    className: rule.className,
-    tagNames: rule.tagNames,
-    treatments: rule.treatments,
-    enabled: true,
-  };
-}
 
 const STEP_LABELS: Record<FetchProgress["step"], string> = {
   channels: "Listing channels",
@@ -332,8 +310,15 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
       setRawData(data);
       autoAssignColors(data);
       setFetchState({ kind: "idle" });
-      // The range that actually ran is what the session means now.
-      queueSaveRef.current({ start: range.startIso, end: range.endIso });
+      // The range that actually ran is what the session means now. Persist the
+      // raw payload alongside it (#3): stored raw lets a later reopen rehydrate
+      // and rebake messages on rule changes without re-hitting Slack. The
+      // messages effect saves the freshly baked messages[] on the same cycle.
+      queueSaveRef.current({
+        start: range.startIso,
+        end: range.endIso,
+        raw: data as unknown as Record<string, unknown>,
+      });
     } catch (err) {
       if (!mountedRef.current) return;
       if (isAbortError(err)) {
@@ -396,9 +381,18 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
           controls: adoptedControls,
         } satisfies SessionEditorState);
         setLoad({ kind: "ready" });
-        // A session without messages (fresh from the create flow) runs its
-        // first fetch automatically.
-        if (loaded.messages.length === 0) {
+        // Rehydrate the stored raw payload (#3) so the editor works against
+        // live data from the first paint: the preview renders from it, and any
+        // rule/filter/override change rebakes and re-saves messages[] with no
+        // Slack round-trip. Colors are NOT re-assigned — the stored overrides
+        // already carry them; only a genuine Refresh re-derives the cast.
+        if (loaded.raw) {
+          setRawData(loaded.raw as unknown as SessionRawData);
+        } else if (loaded.messageCount === 0) {
+          // No raw and nothing captured yet (fresh from the create flow): first
+          // fetch runs automatically. An older session with a message count but
+          // no stored raw shows the empty preview until the user Refreshes —
+          // its baked snapshot is no longer kept.
           void startFetchRef.current?.({
             channel: loaded.channel,
             startLocal,
@@ -438,74 +432,48 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
   }, []);
 
   /* ------------------------------------------------------------------ *
-   * Transform: preview + messages payload from one context
+   * Transform: preview + messages payload from ONE SessionProcessor
    * ------------------------------------------------------------------ */
 
-  const regexRules = useMemo<RegexRule[]>(() => {
-    if (!allRules) return [];
-    const byId = new Map(allRules.map((r) => [r.id, r]));
-    return ruleIds.flatMap((id) => {
-      const rule = byId.get(id);
-      return rule ? [toRegexRule(rule)] : [];
-    });
-  }, [allRules, ruleIds]);
-
-  const ruleOutcome = useMemo(
-    () => (rawData ? applyRules(rawData.threads, regexRules) : EMPTY_RULE_OUTCOME),
-    [rawData, regexRules],
+  const regexRules = useMemo<RegexRule[]>(
+    () => (allRules ? resolveRegexRules(allRules, ruleIds) : []),
+    [allRules, ruleIds],
   );
 
-  const renderCtx = useMemo<RenderContext | null>(() => {
+  // The single authoritative transcription pass (#3): rules + display options
+  // applied once, feeding BOTH the preview and the persisted messages[] — so
+  // what you see is exactly what a draft will bake. sessionRenderOptions is the
+  // same mapping the block-editor engine uses, so live edits here and a later
+  // generate resolve identically. (The class's own update() caching is
+  // redundant under a deps-gated memo, so a fresh init().process() is simplest.)
+  const processed = useMemo<ProcessedSession | null>(() => {
     if (!rawData) return null;
-    return {
-      directory: createDirectory(rawData.names, userOverrides),
-      imageMode: "proxy",
-      imageProxyBase,
-      density: "comfortable",
-      scheme,
-      showAvatars: controls.showAvatars,
-      showTimestamps: controls.showTimestamps,
-      showReactions: controls.showReactions,
-      hiddenKinds: hiddenKindsFor(controls),
-      ruleEffects: ruleOutcome.effects,
-      customEmoji: rawData.customEmoji ?? {},
-    };
-  }, [rawData, userOverrides, imageProxyBase, scheme, controls, ruleOutcome]);
+    const options = sessionRenderOptions(
+      { userOverrides, scheme, customCss, controls },
+      { imageProxyBase },
+    );
+    return SessionProcessor.init(
+      { threads: rawData.threads, names: rawData.names, customEmoji: rawData.customEmoji },
+      regexRules,
+      options,
+    ).process();
+  }, [rawData, regexRules, scheme, customCss, controls, userOverrides, imageProxyBase]);
 
-  // Fetched data renders live; a reopened session renders its saved
-  // messages until the next refresh.
-  const fragment = useMemo(() => {
-    if (rawData && renderCtx) {
-      return renderConversationFragment(rawData.threads, renderCtx);
-    }
-    if (session && session.messages.length > 0) {
-      return composeSavedFragment(session.messages, scheme);
-    }
-    return null;
-  }, [rawData, renderCtx, session, scheme]);
+  // The rules panel reads match counts; empty until the first fetch.
+  const ruleOutcome = processed?.outcome ?? EMPTY_RULE_OUTCOME;
+
+  // Live preview from the rehydrated raw; a raw-less session shows the empty
+  // "Fetch messages" state (the baked messages[] snapshot is gone — #3).
+  const fragment = useMemo(
+    () => (processed ? toPreviewHtml(processed) : null),
+    [processed],
+  );
 
   // The persisted (nonce-free) image endpoints get their preview auth here.
   const previewHtml = useMemo(
     () => (fragment && boot ? authorizePreviewImages(fragment, boot) : fragment),
     [fragment, boot],
   );
-
-  const messagesPayload = useMemo(
-    () =>
-      rawData && renderCtx ? sessionMessageAttributes(rawData.threads, renderCtx) : null,
-    [rawData, renderCtx],
-  );
-
-  // Persist the transform output whenever it changes (fetch completion,
-  // rule/override/toggle edits over live data) — messages are REPLACED.
-  const lastMessagesRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!messagesPayload) return;
-    const serialized = JSON.stringify(messagesPayload);
-    if (serialized === lastMessagesRef.current) return;
-    lastMessagesRef.current = serialized;
-    queueSaveRef.current({ messages: messagesPayload });
-  }, [messagesPayload]);
 
   // Persist editorState (debounced) once it drifts from the adopted baseline.
   const editorState = useMemo<SessionEditorState>(
@@ -644,6 +612,32 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
       ? draftUrlTemplate.replace("%d", String(session.id))
       : null;
 
+  // "Draft this session" navigates to a server action that seeds a post from
+  // the session's STORED messages[]. A rule/filter edit made moments earlier
+  // is still on the debounced-save timer, so a plain link would ship pre-rule
+  // content (#3). Intercept the ordinary left-click, flush the pending save
+  // and let the queue drain (an in-flight PUT parks newer edits), then go.
+  // Modified clicks (new tab/window) fall through to the href untouched.
+  async function handleDraftClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (!draftUrl) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = undefined;
+    await flushSaveRef.current();
+    // Bounded wait (~6s): if a hung PUT never settles, navigate anyway — the
+    // unmount flush and the in-flight completion path still try to persist.
+    for (
+      let i = 0;
+      i < 60 && (inFlightRef.current || Object.keys(pendingRef.current).length > 0);
+      i++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await flushSaveRef.current();
+    }
+    window.location.assign(draftUrl);
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
@@ -668,7 +662,7 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
             </span>
           )}
           {draftUrl && (
-            <a href={draftUrl} className={SMALL_BUTTON_CLS}>
+            <a href={draftUrl} className={SMALL_BUTTON_CLS} onClick={handleDraftClick}>
               Draft this session
             </a>
           )}

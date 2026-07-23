@@ -18,7 +18,7 @@ describe("sessionImageProxyBase", () => {
   });
 
   it("handles a root-relative apiBase (no origin)", () => {
-    expect(sessionImageProxyBase({ apiBase: "/wp-json/chronicler/v1", nonce: "x" })).toBe(
+    expect(sessionImageProxyBase({ apiBase: "/wp-json/chronicler/v1" })).toBe(
       "/wp-json/chronicler/v1/image?url=",
     );
   });

@@ -17,7 +17,7 @@ final class Schema
     public const OPTION = 'chronicler_schema_version';
 
     /** Bump when the stored shape changes, and add a step in upgrade(). */
-    public const VERSION = 1;
+    public const VERSION = 3;
 
     public static function ensure(): void
     {
@@ -36,6 +36,19 @@ final class Schema
             // v1: the Sessions table. Rules (CPT) and Settings (options)
             // need no DDL.
             Sessions::createTable();
+        }
+        if ($from < 2) {
+            // v2: the sessions.raw column (#3). createTable() is idempotent —
+            // dbDelta diffs and adds only the new column on an existing table.
+            Sessions::createTable();
+        }
+        if ($from < 3) {
+            // v3 (#3): the baked messages[] column is gone — sessions store
+            // raw + config only, and the transcript is rebaked from raw on
+            // demand. dbDelta cannot drop columns, so drop it explicitly;
+            // guarded so a fresh install (createTable never made it) and a
+            // re-run are both no-ops.
+            Sessions::dropMessagesColumn();
         }
     }
 }

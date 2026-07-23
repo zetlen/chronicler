@@ -108,64 +108,96 @@
     function generate() {
       if (!attributes.sessionId) return;
       setGen({ busy: true, error: '', progress: '' });
-      wp.apiFetch({ path: '/chronicler/v1/sessions/' + attributes.sessionId })
-        .then(function (session) {
-          var messages = Array.isArray(session.messages) ? session.messages : [];
-          var urls = lib.collectImageUrls(messages);
-          return mirror
-            .mirrorAll(urls, {
-              concurrency: 4,
-              onProgress: function (done, total) {
-                setGen({
-                  busy: true,
-                  error: '',
-                  progress: 'Mirroring images (' + done + ' of ' + total + ')…',
-                });
-              },
-            })
-            .then(function (mirrored) {
-              // Media\Mirror consumer obligation: parent every mirrored
-              // attachment to this post (the id exists on the auto-draft)
-              // so eviction (unattached mirrors > 14 days) never takes an
-              // image the published post references. Best-effort like the
-              // mirroring itself: a failure warns, never blocks.
-              var postId = wp.data.select('core/editor').getCurrentPostId();
-              var urlMap = {};
-              var parenting = Object.keys(mirrored.byUrl).map(function (url) {
-                urlMap[url] = mirrored.byUrl[url].url;
-                if (!postId) return null;
-                return mirror
-                  .parentAttachment(mirrored.byUrl[url].id, postId)
-                  .catch(function (err) {
-                    console.warn(
-                      'Chronicler: could not parent mirrored attachment ' +
-                        mirrored.byUrl[url].id + ' to post ' + postId + '.',
-                      err
-                    );
-                  });
-              });
-              return Promise.all(parenting).then(function () {
-                var rewritten = {};
-                for (var key in session) {
-                  if (Object.prototype.hasOwnProperty.call(session, key)) {
-                    rewritten[key] = session[key];
-                  }
-                }
-                rewritten.messages = lib.rewriteImageUrls(messages, urlMap);
-                var tree = lib.sessionToBlocks(rewritten, {
-                  generatedAt: new Date().toISOString(),
-                  baseCss: window.chroniclerTranscriptBaseCss || '',
-                });
-                wp.data
-                  .dispatch('core/block-editor')
-                  .replaceBlocks(props.clientId, [toBlock(tree)]);
-                // No setGen after this: replaceBlocks unmounts the placeholder.
-              });
-            });
-        })
-        .catch(function (err) {
-          setGen({ busy: false, error: errorMessage(err), progress: '' });
+      runGenerate().catch(function (err) {
+        setGen({ busy: false, error: errorMessage(err), progress: '' });
+      });
+    }
+
+    // Async so the transcript render can be consumed as a `for await` over the
+    // engine's batched generator: the transform runs in time-budgeted slices
+    // that yield to the event loop, keeping the tab responsive and the progress
+    // indicator moving on large sessions (the transform is main-thread — this
+    // spreads it out, it doesn't parallelize it).
+    async function runGenerate() {
+      var fetched = await Promise.all([
+        wp.apiFetch({ path: '/chronicler/v1/sessions/' + attributes.sessionId }),
+        wp.apiFetch({ path: '/chronicler/v1/rules' }),
+      ]);
+      var session = fetched[0];
+      var rules = Array.isArray(fetched[1]) ? fetched[1] : [];
+      var engine = window.chroniclerSessionEngine;
+      // Compute the transcript from the session's STORED RAW + attached rules
+      // at click time (the same pass the editor preview runs), so the draft
+      // reflects the current rules — not a stale pre-rule snapshot.
+      var prep = engine && engine.prepareGeneration ? engine.prepareGeneration(session, rules) : null;
+      // No stored raw (a session never refreshed since raw persistence landed):
+      // don't bake stale data — ask for a Refresh.
+      if (prep === null) {
+        setGen({
+          busy: false,
+          error:
+            'This session has no stored Slack data yet. Open it in the Chronicler session editor and press Refresh, then generate.',
+          progress: '',
         });
+        return;
+      }
+
+      // Render the transcript in batches — the indicator moves per slice.
+      var messages = [];
+      for await (var slice of prep.batches()) {
+        for (var b = 0; b < slice.batch.length; b++) messages.push(slice.batch[b]);
+        setGen({
+          busy: true,
+          error: '',
+          progress: 'Rendering transcript (' + slice.done + ' of ' + slice.total + ')…',
+        });
+      }
+
+      // Mirror every referenced Slack image into the media library.
+      var urls = lib.collectImageUrls(messages);
+      var mirrored = await mirror.mirrorAll(urls, {
+        concurrency: 4,
+        onProgress: function (done, total) {
+          setGen({
+            busy: true,
+            error: '',
+            progress: 'Mirroring images (' + done + ' of ' + total + ')…',
+          });
+        },
+      });
+
+      // Media\Mirror consumer obligation: parent every mirrored attachment to
+      // this post (the id exists on the auto-draft) so eviction (unattached
+      // mirrors > 14 days) never takes an image the published post references.
+      // Best-effort like the mirroring itself: a failure warns, never blocks.
+      var postId = wp.data.select('core/editor').getCurrentPostId();
+      var urlMap = {};
+      var parenting = Object.keys(mirrored.byUrl).map(function (url) {
+        urlMap[url] = mirrored.byUrl[url].url;
+        if (!postId) return null;
+        return mirror.parentAttachment(mirrored.byUrl[url].id, postId).catch(function (err) {
+          console.warn(
+            'Chronicler: could not parent mirrored attachment ' +
+              mirrored.byUrl[url].id + ' to post ' + postId + '.',
+            err
+          );
+        });
+      });
+      await Promise.all(parenting);
+
+      var rewritten = {};
+      for (var key in session) {
+        if (Object.prototype.hasOwnProperty.call(session, key)) {
+          rewritten[key] = session[key];
+        }
+      }
+      rewritten.messages = lib.rewriteImageUrls(messages, urlMap);
+      var tree = lib.sessionToBlocks(rewritten, {
+        generatedAt: new Date().toISOString(),
+        baseCss: window.chroniclerTranscriptBaseCss || '',
+      });
+      wp.data.dispatch('core/block-editor').replaceBlocks(props.clientId, [toBlock(tree)]);
+      // No setGen after this: replaceBlocks unmounts the placeholder.
     }
 
     var body;

@@ -58,10 +58,15 @@ export interface SessionLight {
   updated: string;
 }
 
-/** GET /sessions/{id} — the full Session, message payload included. */
+/**
+ * GET /sessions/{id} — the full Session, message payload included. `raw` is
+ * the last fetched Slack payload (the editor's SessionRawData), or null when
+ * none has been fetched yet; kept opaque here (mirrors Schemas::rawPayload,
+ * which stores it verbatim) and cast to SessionRawData where it's rehydrated.
+ */
 export interface SessionFull extends SessionLight {
   editorState: SessionEditorState;
-  messages: Record<string, unknown>[];
+  raw: Record<string, unknown> | null;
 }
 
 /** A stored Rule (Store\Rules / #109). */
@@ -127,7 +132,9 @@ export interface SessionPatch {
   end?: string;
   rule_ids?: number[];
   editorState?: SessionEditorState;
-  messages?: Record<string, unknown>[];
+  /** The last fetched Slack payload (SessionRawData). The stored source of
+   *  truth: the transcript is rebaked from it on demand (#3). */
+  raw?: Record<string, unknown> | null;
 }
 
 export function putSession(

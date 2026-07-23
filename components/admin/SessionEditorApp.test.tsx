@@ -136,24 +136,39 @@ const SESSION_LIGHT: SessionLight = {
   updated: "2026-07-11 10:00:00",
 };
 
-/** Saved messages in the block-attribute schema — enough to skip auto-fetch. */
-const SAVED_MESSAGES: Record<string, unknown>[] = [
-  {
-    rootClass: "slk-msg slk-msg--text",
-    anchorId: "msg-1783480010000200",
-    authorName: "Alice",
-    authorColor: "#4674b8",
-    authorColorDark: "#7aa7e0",
-    bodyHtml: "The tide <strong>pulls back</strong>.",
-    headHtml: '<span class="slk-msg__time">Jul 10, 2026</span>',
-  },
-  { html: '<div class="slk-msg slk-system">Bob joined the channel</div>' },
-];
+/** Stored raw payload (SessionRawData) — the transcript's source of truth.
+ *  Rehydrated on load, it renders the preview with no Slack round-trip. */
+const RAW_PAYLOAD: Record<string, unknown> = {
+  threads: [
+    {
+      parent: { type: "message", ts: "1783480010.000200", user: "U1", text: "The tide *pulls back*." },
+      replies: [],
+    },
+    {
+      parent: {
+        type: "message",
+        subtype: "channel_join",
+        ts: "1783480020.000300",
+        user: "U2",
+        text: "",
+      },
+      replies: [],
+    },
+  ],
+  names: { users: { U1: "Alice", U2: "Bob" }, channels: { C1: "session-log" } },
+  customEmoji: {},
+  unresolvedNames: 0,
+  threadCount: 2,
+  messageCount: 2,
+  truncated: false,
+};
 
 const SESSION_FULL: SessionFull = {
   ...SESSION_LIGHT,
   editorState: { userOverrides: {}, scheme: "light", customCss: "", controls: {} },
-  messages: SAVED_MESSAGES,
+  // Stored raw means the reopened session rehydrates and previews from it —
+  // no baked messages[] snapshot, no Slack fetch (#3).
+  raw: RAW_PAYLOAD,
 };
 
 const EDITOR_ROUTES: StubRoute[] = [
@@ -232,7 +247,7 @@ describe("session list", () => {
     render(<SessionEditorApp />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     expect(new URLSearchParams(window.location.search).get("session")).toBe("3");
-    // The editor loads the full session and renders its saved messages.
+    // The editor loads the full session and renders from its stored raw.
     await screen.findByText("#session-log");
     await waitFor(() =>
       expect(document.querySelector(".slack-log")).not.toBeNull(),
@@ -455,7 +470,7 @@ describe("create view", () => {
  * ------------------------------------------------------------------ */
 
 describe("editor view", () => {
-  it("renders a reopened session from its saved messages without touching Slack", async () => {
+  it("renders a reopened session from its stored raw without touching Slack", async () => {
     gotoRoute("session=3");
     bootPage();
     const { calls } = stubApi(EDITOR_ROUTES);
@@ -468,7 +483,7 @@ describe("editor view", () => {
     expect(log.innerHTML).toContain("<strong>pulls back</strong>");
     expect(log.innerHTML).toContain("slk-system");
 
-    // Saved messages mean no auto-fetch: zero slack/* proxy calls.
+    // Stored raw means no auto-fetch: zero slack/* proxy calls.
     expect(calls.every((c) => !c.url.includes("/slack/"))).toBe(true);
   });
 

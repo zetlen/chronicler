@@ -206,7 +206,50 @@ if (gameSystemSize > GAME_SYSTEM_BUDGET_KB * 1024) {
   process.exit(1);
 }
 
-for (const file of [jsOut, cssOut, gameSystemOut]) {
+/* ----------------------------------------------------------------- *
+ * JS: the block-editor generation engine (#3)
+ *
+ * A separate entry point over the SAME lib/transform + lib/session source as
+ * the admin app, so the block editor runs transcription rules at generate time
+ * from a session's stored raw. Tree-shaking keeps the preview serializer
+ * (renderDocument) out of this bundle — it imports only toMessageAttributes.
+ * ----------------------------------------------------------------- */
+
+const engineOut = join(outDir, "chronicler-session-engine.js");
+
+const engineResult = await build({
+  absWorkingDir: root,
+  entryPoints: ["components/generate/engine.ts"],
+  outfile: engineOut,
+  bundle: true,
+  minify: true,
+  format: "iife",
+  platform: "browser",
+  target: "es2020",
+  define: { "process.env.NODE_ENV": '"production"' },
+  metafile: true,
+  logLevel: "info",
+});
+
+const engineOffenders = Object.keys(engineResult.metafile.inputs).filter(
+  (input) =>
+    input === "next" ||
+    input.startsWith("app/") ||
+    input.startsWith("next/") ||
+    /(^|\/)node_modules\/next\//.test(input),
+);
+if (engineOffenders.length > 0) {
+  console.error(
+    "✗ Forbidden modules in the session-engine bundle graph (next/* and app/ may not ship to wp-admin):",
+  );
+  for (const input of engineOffenders) console.error(`  - ${input}`);
+  process.exit(1);
+}
+console.log(
+  `✓ Session-engine module graph clean: ${Object.keys(engineResult.metafile.inputs).length} inputs, no next/* or app/ modules`,
+);
+
+for (const file of [jsOut, cssOut, gameSystemOut, engineOut]) {
   const { size } = statSync(file);
   if (size === 0) {
     console.error(`✗ ${file} is empty`);

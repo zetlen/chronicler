@@ -100,6 +100,17 @@ final class Schemas
         ];
     }
 
+    /**
+     * The stored raw Slack payload (#3): the client's SessionRawData object
+     * (threads/names/emoji), or null to clear it. Opaque and NOT run through
+     * Sanitize::tree — rules match the verbatim Slack text, and every rendered
+     * fragment is sanitized downstream by the transform; PHP never echoes it.
+     */
+    public static function rawPayload(): array
+    {
+        return ['type' => ['object', 'null']];
+    }
+
     /** UserOverride map from lib/transform/directory.ts, keyed by user id. */
     public static function userOverrides(): array
     {
@@ -173,7 +184,7 @@ final class Schemas
             'end' => ['type' => 'string', 'minLength' => 1, 'required' => true],
             'rule_ids' => ['type' => 'array', 'items' => ['type' => 'integer'], 'default' => []],
             'editorState' => self::sanitized(self::editorState()),
-            'messages' => self::sanitized(['type' => 'array', 'items' => self::messageItem()]),
+            'raw' => self::rawPayload(),
         ];
     }
 
@@ -187,7 +198,7 @@ final class Schemas
             'end' => ['type' => 'string', 'minLength' => 1],
             'rule_ids' => ['type' => 'array', 'items' => ['type' => 'integer']],
             'editorState' => self::sanitized(self::editorState()),
-            'messages' => self::sanitized(['type' => 'array', 'items' => self::messageItem()]),
+            'raw' => self::rawPayload(),
         ];
     }
 
@@ -359,7 +370,7 @@ final class Schemas
     {
         $schema = self::sessionLightResponse();
         $schema['properties']['editorState'] = self::editorState();
-        $schema['properties']['messages'] = ['type' => 'array', 'items' => self::messageItem()];
+        $schema['properties']['raw'] = self::rawPayload();
         return $schema;
     }
 

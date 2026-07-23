@@ -41,6 +41,27 @@
     return (err && err.message) || 'Request failed.';
   }
 
+  var NO_RAW_MESSAGE =
+    'This session has no stored Slack data yet — open it in the Chronicler session editor and press Refresh, then try again.';
+
+  /** Fresh, rule-applied message attributes via the bundled engine (over the
+   *  session's stored raw), or null when there is no stored raw. */
+  function messagesFor(session, rules) {
+    var engine = window.chroniclerSessionEngine;
+    return engine && engine.messagesFor ? engine.messagesFor(session, rules) : null;
+  }
+
+  /** A shallow copy of the session with messages replaced — deriveTags reads
+   *  session.messages + session.rule_ids off the object. */
+  function withMessages(session, messages) {
+    var copy = {};
+    for (var key in session) {
+      if (Object.prototype.hasOwnProperty.call(session, key)) copy[key] = session[key];
+    }
+    copy.messages = messages;
+    return copy;
+  }
+
   /**
    * The session this post's content points at: the first generated
    * chronicler/transcript wrapper (provenance sessionId > 0) or
@@ -111,7 +132,16 @@
       setTags({ busy: true, note: '', error: '' });
       Promise.all([fetchSession(sessionId), wp.apiFetch({ path: '/chronicler/v1/rules' })])
         .then(function (results) {
-          var names = lib.deriveTags(results[0], results[1]);
+          var session = results[0];
+          var rules = Array.isArray(results[1]) ? results[1] : [];
+          // Tags derive from the freshly ruled transcript (engine over stored
+          // raw), so a wp-tag rule attached after the fetch is honored.
+          var messages = messagesFor(session, rules);
+          if (messages === null) {
+            setTags({ busy: false, note: '', error: NO_RAW_MESSAGE });
+            return null;
+          }
+          var names = lib.deriveTags(withMessages(session, messages), rules);
           if (names.length === 0) {
             setTags({ busy: false, note: 'No wp-tag rule matched this session — nothing to apply.', error: '' });
             return null;
@@ -137,9 +167,14 @@
 
     function listImages() {
       setImages({ kind: 'idle', busy: true, note: '', error: '' });
-      fetchSession(sessionId)
-        .then(function (session) {
-          var candidates = lib.imageCandidates(session.messages);
+      Promise.all([fetchSession(sessionId), wp.apiFetch({ path: '/chronicler/v1/rules' })])
+        .then(function (results) {
+          var messages = messagesFor(results[0], Array.isArray(results[1]) ? results[1] : []);
+          if (messages === null) {
+            setImages({ kind: 'idle', busy: false, note: NO_RAW_MESSAGE, error: '' });
+            return;
+          }
+          var candidates = lib.imageCandidates(messages);
           if (candidates.length === 0) {
             setImages({ kind: 'idle', busy: false, note: 'This session has no mirrorable images.', error: '' });
             return;

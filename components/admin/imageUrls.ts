@@ -35,7 +35,7 @@ function apiBasePath(apiBase: string): string {
  * permalinks: `/wp-json/chronicler/v1/image?url=`; plain permalinks:
  * `/?rest_route=/chronicler/v1/image&url=`.
  */
-export function sessionImageProxyBase(boot: ChroniclerBoot): string {
+export function sessionImageProxyBase(boot: { apiBase: string }): string {
   const base = apiBasePath(boot.apiBase);
   // A querying base is the plain-permalink ?rest_route= form: the endpoint
   // path extends the rest_route value and further args chain with `&`.

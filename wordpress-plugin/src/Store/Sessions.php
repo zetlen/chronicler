@@ -8,7 +8,17 @@ namespace Chronicler\Store;
  * A Session is {integration, channel {id, name}, start/end, attached Rule
  * ids, editor state, and an array of post-transform message objects in the
  * chronicler/message block-attribute schema (Rest\Schemas::messageItem())}.
- * Raw Slack payloads are never stored — refresh re-fetches.
+ *
+ * It ALSO keeps the last fetched raw Slack payload (`raw`, the client's
+ * SessionRawData: threads + names + emoji). Rules are lossy — hiding and the
+ * start/end window drop messages out of `messages[]` entirely — so a stored
+ * transcript cannot be re-filtered against a changed rule set from `messages`
+ * alone. Persisting `raw` lets the editor rehydrate on load and re-bake
+ * `messages[]` whenever rules/filters change WITHOUT re-hitting Slack (#3);
+ * "Refresh from Slack" remains the only path that re-fetches. The raw blob is
+ * stored verbatim (never kses-sanitized): rules match the raw Slack text, and
+ * the transform sanitizes every rendered fragment downstream — PHP never
+ * echoes `raw`, only the baked `messages[]`.
  *
  * Why a table and not a CPT: message payloads run to 1–2 MB of JSON. In a
  * CPT that blob would sit in post_content (kses-filtered on save for users
@@ -59,7 +69,7 @@ final class Sessions
             end_at varchar(64) NOT NULL DEFAULT '',
             rule_ids longtext,
             editor_state longtext,
-            messages longtext,
+            raw longtext,
             message_count int(10) unsigned NOT NULL DEFAULT 0,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
@@ -73,7 +83,7 @@ final class Sessions
     {
         global $wpdb;
         $now = gmdate('Y-m-d H:i:s');
-        $messages = array_values(is_array($data['messages'] ?? null) ? $data['messages'] : []);
+        $raw = $data['raw'] ?? null;
         $inserted = $wpdb->insert(self::tableName(), [
             'integration' => (string) ($data['integration'] ?? 'slack'),
             'channel_id' => (string) ($data['channel']['id'] ?? ''),
@@ -82,8 +92,8 @@ final class Sessions
             'end_at' => (string) ($data['end'] ?? ''),
             'rule_ids' => wp_json_encode(self::normalizeRuleIds($data['rule_ids'] ?? [])),
             'editor_state' => wp_json_encode((object) ($data['editorState'] ?? [])),
-            'messages' => wp_json_encode($messages),
-            'message_count' => count($messages),
+            'raw' => self::encodeRaw($raw),
+            'message_count' => self::countRawMessages($raw),
             'created_at' => $now,
             'updated_at' => $now,
         ]);
@@ -107,8 +117,8 @@ final class Sessions
 
     /**
      * Apply a partial update (only keys present in $patch change), or null
-     * when the id is unknown or the write fails. Replacing `messages`
-     * recounts message_count.
+     * when the id is unknown or the write fails. Replacing `raw` recounts
+     * message_count from it.
      */
     public static function update(int $id, array $patch): ?array
     {
@@ -133,10 +143,9 @@ final class Sessions
         if (array_key_exists('editorState', $patch)) {
             $row['editor_state'] = wp_json_encode((object) (is_array($patch['editorState']) ? $patch['editorState'] : []));
         }
-        if (array_key_exists('messages', $patch)) {
-            $messages = array_values(is_array($patch['messages']) ? $patch['messages'] : []);
-            $row['messages'] = wp_json_encode($messages);
-            $row['message_count'] = count($messages);
+        if (array_key_exists('raw', $patch)) {
+            $row['raw'] = self::encodeRaw($patch['raw']);
+            $row['message_count'] = self::countRawMessages($patch['raw']);
         }
         $row['updated_at'] = gmdate('Y-m-d H:i:s');
         if ($wpdb->update(self::tableName(), $row, ['id' => $id]) === false) {
@@ -149,6 +158,31 @@ final class Sessions
     {
         global $wpdb;
         return (bool) $wpdb->delete(self::tableName(), ['id' => $id]);
+    }
+
+    /**
+     * Drop the legacy `messages` column if present (schema v3, #3). Idempotent:
+     * a fresh install never created the column, and a re-run finds nothing to
+     * drop — the information_schema probe keeps both quiet (no ALTER, no
+     * warning). Sessions store raw + config now; the transcript is rebaked from
+     * raw on demand, so the baked snapshot is reclaimed.
+     */
+    public static function dropMessagesColumn(): void
+    {
+        global $wpdb;
+        $table = self::tableName();
+        $exists = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COLUMN_NAME FROM information_schema.COLUMNS'
+                    . ' WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s',
+                DB_NAME,
+                $table,
+                'messages'
+            )
+        );
+        if ($exists !== null) {
+            $wpdb->query("ALTER TABLE $table DROP COLUMN messages");
+        }
     }
 
     /** GET /sessions default page size; Schemas::sessionListArgs() mirrors it. */
@@ -187,12 +221,18 @@ final class Sessions
      * Pure row <-> shape helpers (exercised by tests/store.test.php)
      * ------------------------------------------------------------------ */
 
-    /** Full Session shape from a SELECT * row. Pure. */
+    /**
+     * Full Session shape from a SELECT * row. Pure. `raw` is the stored
+     * SessionRawData object (the transcript's source of truth — the client
+     * and the block-editor engine rebake messages from it on demand), or null
+     * when none has been fetched yet, which both surfaces read as "must
+     * Refresh to preview/generate".
+     */
     public static function fromRow(array $row): array
     {
         return self::lightFromRow($row) + [
             'editorState' => self::decodeJson($row['editor_state'] ?? null, []),
-            'messages' => array_values(self::decodeJson($row['messages'] ?? null, [])),
+            'raw' => self::decodeRaw($row['raw'] ?? null),
         ];
     }
 
@@ -231,5 +271,54 @@ final class Sessions
         }
         $decoded = json_decode($json, true);
         return is_array($decoded) ? $decoded : $fallback;
+    }
+
+    /**
+     * Encode the raw payload for the `raw` column: JSON for a present object,
+     * SQL NULL when the caller clears it (or hands null). Raw is the client's
+     * opaque SessionRawData object, round-tripped verbatim.
+     */
+    private static function encodeRaw($raw): ?string
+    {
+        return $raw === null ? null : wp_json_encode($raw);
+    }
+
+    /**
+     * Total messages captured in a raw payload (parents + replies across every
+     * thread) — the list's message_count. Counts everything fetched, not the
+     * rule-filtered visible subset (the store never runs the transform); 0 for
+     * a null/malformed payload. Pure.
+     */
+    public static function countRawMessages($raw): int
+    {
+        if (!is_array($raw) || !isset($raw['threads']) || !is_array($raw['threads'])) {
+            return 0;
+        }
+        $count = 0;
+        foreach ($raw['threads'] as $thread) {
+            if (!is_array($thread)) {
+                continue;
+            }
+            $count += 1; // the parent
+            if (isset($thread['replies']) && is_array($thread['replies'])) {
+                $count += count($thread['replies']);
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Decode the stored raw payload back to an associative array, or null
+     * when the column is empty/NULL (no fetch yet) or corrupt. Distinct from
+     * decodeJson's [] fallback: null is a meaningful "nothing stored" signal
+     * the client branches on, and an empty [] would masquerade as data.
+     */
+    private static function decodeRaw($json)
+    {
+        if (!is_string($json) || $json === '') {
+            return null;
+        }
+        $decoded = json_decode($json, true);
+        return is_array($decoded) ? $decoded : null;
     }
 }

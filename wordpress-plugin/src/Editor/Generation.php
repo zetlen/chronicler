@@ -3,6 +3,7 @@
 namespace Chronicler\Editor;
 
 use Chronicler\Capabilities;
+use Chronicler\Rest\Routes;
 use Chronicler\Store\Sessions;
 
 /**
@@ -59,6 +60,10 @@ final class Generation
     public const BASE_CSS_HANDLE = 'chronicler-transcript-base-css';
     /** Pure session→blocks mapping (generate/session-blocks.js). */
     public const LIB_HANDLE = 'chronicler-session-blocks';
+    /** Bundled transcription engine (components/generate/engine.ts): computes
+     *  a session's message attributes from its stored raw + rules at generate
+     *  time, exposed as window.chroniclerSessionEngine (#3). */
+    public const ENGINE_HANDLE = 'chronicler-session-engine';
     /** Shared image mirror/parent REST plumbing (generate/mirror.js). */
     public const MIRROR_HANDLE = 'chronicler-session-mirror';
     /** Placeholder block editor script (named by block.json editorScript). */
@@ -90,24 +95,32 @@ final class Generation
         // The mapping module itself is pure; depending on the base-css asset
         // just guarantees both globals exist wherever the lib is loaded.
         wp_register_script(self::LIB_HANDLE, $url('session-blocks.js'), [self::BASE_CSS_HANDLE], CHRONICLER_VERSION, true);
+        // The bundled engine lives in the built dist dir (esbuild output), not
+        // the hand-written generate/ scripts; it self-registers
+        // window.chroniclerSessionEngine on load.
+        $distUrl = static fn (string $file): string => plugins_url('admin/dist/' . $file, CHRONICLER_PLUGIN_FILE);
+        wp_register_script(self::ENGINE_HANDLE, $distUrl('chronicler-session-engine.js'), [], CHRONICLER_VERSION, true);
         // Mirror/parent REST plumbing shared by the placeholder's Generate
         // flow and the sidebar's featured-image action.
         wp_register_script(self::MIRROR_HANDLE, $url('mirror.js'), ['wp-api-fetch'], CHRONICLER_VERSION, true);
         wp_register_script(
             self::PLACEHOLDER_HANDLE,
             $url('placeholder/index.js'),
-            ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::MIRROR_HANDLE],
+            ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE],
             CHRONICLER_VERSION,
             true
         );
-        // The no-sessions empty state links to the session editor page.
+        // chroniclerAdminUrl: the no-sessions empty state links to the session
+        // editor page. apiBase: the engine derives the image-proxy base from it
+        // (read lazily at Generate time, so localize order doesn't matter).
         wp_localize_script(self::PLACEHOLDER_HANDLE, 'chroniclerGenerateBoot', [
             'chroniclerAdminUrl' => admin_url('admin.php?page=' . \Chronicler\Admin\Page::SLUG),
+            'apiBase' => esc_url_raw(rest_url(Routes::API_NAMESPACE)),
         ]);
         wp_register_script(
             self::SIDEBAR_HANDLE,
             $url('sidebar.js'),
-            ['wp-plugins', 'wp-editor', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::MIRROR_HANDLE],
+            ['wp-plugins', 'wp-editor', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE],
             CHRONICLER_VERSION,
             true
         );

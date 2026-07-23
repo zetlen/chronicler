@@ -71,7 +71,6 @@ check('tree leaves scheme alone', $state['scheme'] === 'custom-dark');
 $sanitizer = [Sanitize::class, 'tree'];
 foreach (['sessionCreateArgs', 'sessionUpdateArgs'] as $args) {
     $set = Schemas::$args();
-    check("$args sanitizes messages", ($set['messages']['sanitize_callback'] ?? null) === $sanitizer);
     check("$args sanitizes editorState", ($set['editorState']['sanitize_callback'] ?? null) === $sanitizer);
 }
 check(

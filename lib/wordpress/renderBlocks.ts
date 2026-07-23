@@ -60,29 +60,41 @@ export function messageBlockAttributes(
 }
 
 /**
- * The Session `messages[]` payload (#96/#101): every VISIBLE message's block
- * attributes, flattened in the exact order the block emitter would publish
- * them — parent then surviving replies, with the replies of a filtered-out
- * parent promoted in place. Thread grouping and the omitted-reply notes are
- * not representable in the stored message schema (additionalProperties is
- * false); they are display artifacts the block emitter re-derives at
- * publish/preview time from live data.
+ * The visible messages of a conversation, flattened in the exact order the
+ * block emitter publishes them — parent then surviving replies, with the
+ * replies of a filtered-out parent promoted in place. This is the CHEAP pass
+ * (rule verdicts + visibility only, no transform); the per-message transform
+ * (messageBlockAttributes) is the expensive part, split out so a caller can
+ * run it incrementally (the block-editor engine batches it — #3). Thread
+ * grouping and omitted-reply notes are display artifacts the emitter
+ * re-derives at publish/preview time and are not represented here.
+ */
+export function flattenVisibleMessages(
+  threads: ThreadedMessage[],
+  ctx: RenderContext,
+): SlackMessage[] {
+  const out: SlackMessage[] = [];
+  for (const thread of threads) {
+    if (isVisible(thread.parent, ctx)) {
+      out.push(thread.parent);
+    }
+    for (const reply of thread.replies) {
+      if (isVisible(reply, ctx)) out.push(reply);
+    }
+  }
+  return out;
+}
+
+/**
+ * The Session `messages[]` payload (#96/#101): every visible message's block
+ * attributes, in emitter order. The synchronous whole-conversation form; the
+ * engine's batched generator produces the identical list incrementally.
  */
 export function sessionMessageAttributes(
   threads: ThreadedMessage[],
   ctx: RenderContext,
 ): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
-  for (const thread of threads) {
-    const visibleReplies = thread.replies.filter((r) => isVisible(r, ctx));
-    if (isVisible(thread.parent, ctx)) {
-      out.push(messageBlockAttributes(thread.parent, ctx));
-    }
-    for (const reply of visibleReplies) {
-      out.push(messageBlockAttributes(reply, ctx));
-    }
-  }
-  return out;
+  return flattenVisibleMessages(threads, ctx).map((m) => messageBlockAttributes(m, ctx));
 }
 
 /**

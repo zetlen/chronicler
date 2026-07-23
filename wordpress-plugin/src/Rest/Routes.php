@@ -291,7 +291,7 @@ final class Routes
             'end' => $request['end'],
             'rule_ids' => $request['rule_ids'] ?? [],
             'editorState' => $request['editorState'] ?? [],
-            'messages' => $request['messages'] ?? [],
+            'raw' => $request['raw'] ?? null,
         ]);
         if ($session === null) {
             return new WP_Error('chronicler_db_error', 'Could not save the session.', ['status' => 500]);
@@ -313,7 +313,9 @@ final class Routes
     public function updateSession(WP_REST_Request $request)
     {
         $patch = [];
-        foreach (['channel', 'start', 'end', 'rule_ids', 'editorState', 'messages'] as $key) {
+        // raw is only ever sent as an object (a completed fetch), never null,
+        // so the shared non-null guard is correct — no path clears it.
+        foreach (['channel', 'start', 'end', 'rule_ids', 'editorState', 'raw'] as $key) {
             if ($request->get_param($key) !== null) {
                 $patch[$key] = $request->get_param($key);
             }

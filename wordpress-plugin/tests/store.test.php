@@ -46,7 +46,7 @@ $create = Schemas::sessionCreateArgs();
 foreach (['integration', 'channel', 'start', 'end'] as $field) {
     check("POST sessions requires $field", ($create[$field]['required'] ?? false) === true);
 }
-foreach (['rule_ids', 'editorState', 'messages'] as $field) {
+foreach (['rule_ids', 'editorState', 'raw'] as $field) {
     check("POST sessions leaves $field optional", ($create[$field]['required'] ?? false) === false);
 }
 // Arg-level required is `true`; an object schema's `required` LIST (like
@@ -113,8 +113,8 @@ $row = [
     'start_at' => '2026-07-01T19:00', 'end_at' => '2026-07-02T01:00',
     'rule_ids' => '[3,5]',
     'editor_state' => '{"scheme":"dark","customCss":"","userOverrides":{}}',
-    'messages' => '[{"authorName":"Kira","bodyHtml":"<em>hi</em>"}]',
-    'message_count' => '1',
+    'raw' => '{"threads":[{"parent":{"user":"U1"},"replies":[{"user":"U2"}]}],"names":{"users":{}}}',
+    'message_count' => '2',
     'created_at' => '2026-07-11 20:00:00', 'updated_at' => '2026-07-11 20:05:00',
 ];
 $full = Sessions::fromRow($row);
@@ -122,12 +122,18 @@ check('fromRow types the id', $full['id'] === 12);
 check('fromRow builds the channel object', $full['channel'] === ['id' => 'C42', 'name' => 'general']);
 check('fromRow decodes rule ids as ints', $full['rule_ids'] === [3, 5]);
 check('fromRow decodes editor state', $full['editorState']['scheme'] === 'dark');
-check('fromRow decodes messages', $full['messages'][0]['authorName'] === 'Kira');
+check('fromRow has no baked messages field', !array_key_exists('messages', $full));
+check('fromRow decodes raw payload', $full['raw']['threads'][0]['parent']['user'] === 'U1');
 check('fromRow keeps start/end verbatim', $full['start'] === '2026-07-01T19:00' && $full['end'] === '2026-07-02T01:00');
 $light = Sessions::lightFromRow($row);
-check('light shape has no payload fields', !isset($light['messages']) && !isset($light['editorState']));
-check('light shape keeps the message count', $light['messageCount'] === 1);
-check('corrupt payload JSON degrades to empty', Sessions::fromRow(['messages' => '{oops'] + $row)['messages'] === []);
+check('light shape has no payload fields', !isset($light['editorState']) && !isset($light['raw']));
+check('light shape keeps the message count', $light['messageCount'] === 2);
+check('absent raw column is null, not []', Sessions::fromRow(array_diff_key($row, ['raw' => 1]))['raw'] === null);
+check('corrupt raw JSON degrades to null', Sessions::fromRow(['raw' => '{oops'] + $row)['raw'] === null);
+// message_count derives from the raw payload (parents + replies), 0 when absent.
+check('countRawMessages sums parents and replies', Sessions::countRawMessages(json_decode($row['raw'], true)) === 2);
+check('countRawMessages of null is 0', Sessions::countRawMessages(null) === 0);
+check('countRawMessages of malformed is 0', Sessions::countRawMessages(['threads' => 'nope']) === 0);
 check('normalizeRuleIds cleans junk', Sessions::normalizeRuleIds(['3', 5, 'x', null]) === [3, 5]);
 check('normalizeRuleIds tolerates non-arrays', Sessions::normalizeRuleIds('nope') === []);
 

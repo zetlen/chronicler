@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.21.0
+Stable tag: 4.22.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.22.0 =
+* Transcription rules now apply when you generate a draft (#3). Sessions persist their last fetched Slack data, so reopening a session rehydrates it: attaching, editing, or removing a rule (or a filter) immediately re-filters the stored messages with no re-fetch, and "Draft this session" flushes those changes before it navigates. Previously a rule added after the initial fetch was saved but never applied to the stored transcript, so the generated draft ignored it. "Refresh messages" remains the only action that re-contacts Slack.
 
 = 4.21.0 =
 * Per-PC opinion boxes on NPC pages (#183): a new `opinions` sheet-property type renders one rating-circles + notes set per player character on each NPC page, labeled with the PC's name. Each set is that player's private notebook — visible only to them and the GM, live-editable right on the page without wp-admin. GMs see and can edit every set, including from the Stat Block editor.
