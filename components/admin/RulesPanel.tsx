@@ -107,7 +107,8 @@ export function RulesPanel(props: Props) {
               type="button"
               className={SMALL_BUTTON_CLS}
               aria-expanded={showForm}
-              onClick={() => setShowForm((s) => !s)}
+              disabled={showForm}
+              onClick={() => setShowForm(true)}
             >
               {showForm ? "▾ New rule" : "▸ New rule"}
             </button>
@@ -119,6 +120,7 @@ export function RulesPanel(props: Props) {
                 setShowForm(false);
                 props.onCreated(rule);
               }}
+              onCancel={() => setShowForm(false)}
             />
           )}
         </>
@@ -222,7 +224,13 @@ function AttachMenu({
   );
 }
 
-function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
+function NewRuleForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (rule: WpRule) => void;
+  onCancel: () => void;
+}) {
   const [pattern, setPattern] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [mode, setMode] = useState<RuleMode>("hide");
@@ -371,14 +379,24 @@ function NewRuleForm({ onCreated }: { onCreated: (rule: WpRule) => void }) {
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
 
-      <button
-        type="button"
-        disabled={!canSave}
-        onClick={() => void handleSave()}
-        className={SMALL_BUTTON_CLS}
-      >
-        {saving ? "Saving…" : "Save & attach"}
-      </button>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={!canSave}
+          onClick={() => void handleSave()}
+          className={SMALL_BUTTON_CLS}
+        >
+          {saving ? "Saving…" : "Save & attach"}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onCancel}
+          className={SMALL_BUTTON_CLS}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
