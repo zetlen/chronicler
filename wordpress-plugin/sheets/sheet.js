@@ -99,6 +99,9 @@ export function initSheet(root, fetchImpl = fetch) {
   const call = (path, init = {}) =>
     fetchImpl(`${boot.restUrl}characters/${boot.characterId}${path}`, {
       credentials: "same-origin",
+      // keepalive lets a save started as the page unmounts (the #8 flush) run
+      // to completion; the sheet's JSON writes are far under the 64 KB cap.
+      keepalive: true,
       headers: { "Content-Type": "application/json", "X-WP-Nonce": boot.nonce },
       ...init,
     });
@@ -160,16 +163,62 @@ export function initSheet(root, fetchImpl = fetch) {
     void send(prop, intent.op, intent.value, field);
   };
 
+  // Text fields (#8): `change` only fires on blur, so a player who types a
+  // note and then navigates away — link, back button, closed tab — before the
+  // field loses focus lost the edit entirely. Autosave on `input` (debounced
+  // per field) so typing persists on its own, and flush anything still pending
+  // when the page is hidden/unloaded so the last keystrokes aren't dropped.
+  const TEXT_SELECTOR = ".chr-text, .chr-longtext";
+  const INPUT_DEBOUNCE_MS = 600;
+  const pending = new Map(); // field el -> timer id
+
+  const clearPending = (el) => {
+    const timer = pending.get(el);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      pending.delete(el);
+    }
+  };
+
+  const flushPending = () => {
+    for (const el of [...pending.keys()]) {
+      clearPending(el);
+      interact(el);
+    }
+  };
+
   root.addEventListener("click", (e) => {
     const el = e.target.closest(".chr-track__box, .chr-step");
     if (el && !el.disabled) interact(el);
   });
+  root.addEventListener("input", (e) => {
+    const el = e.target;
+    if (el.matches(TEXT_SELECTOR) && !el.disabled) {
+      clearPending(el);
+      pending.set(
+        el,
+        setTimeout(() => {
+          pending.delete(el);
+          interact(el);
+        }, INPUT_DEBOUNCE_MS),
+      );
+    }
+  });
   root.addEventListener("change", (e) => {
     const el = e.target;
     if (el.matches(".chr-toggle, .chr-check, .chr-select, .chr-text, .chr-longtext") && !el.disabled) {
+      // Blur saves immediately; drop any debounced input-save so it fires once.
+      clearPending(el);
       interact(el);
     }
   });
+  // `visibilitychange → hidden` is the reliable "leaving" signal across
+  // desktop and mobile; `pagehide` covers the plain unload. A keepalive write
+  // (see `call`) survives the unload the flush races against.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPending();
+  });
+  window.addEventListener("pagehide", flushPending);
 }
 
 if (typeof document !== "undefined") {

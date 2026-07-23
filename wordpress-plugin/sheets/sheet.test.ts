@@ -250,6 +250,73 @@ describe("initSheet — opinions (#183)", () => {
     });
   });
 
+  it("autosaves a notes edit on input (debounced) without waiting for blur (#8)", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = opinionDom();
+      const fetchMock = vi.fn().mockResolvedValue(
+        jsonResponse({ prop: "opinions", pc: 21, value: { rating: 2, notes: "typed" }, display: "2/6" }),
+      );
+      initSheet(root, fetchMock);
+
+      const notes = root.querySelector('[data-pc="21"] .chr-opinion__notes') as HTMLTextAreaElement;
+      notes.value = "ty";
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+      // A rapid second keystroke resets the debounce — still one save, not two.
+      notes.value = "typed";
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(fetchMock).not.toHaveBeenCalled(); // nothing yet — no blur
+
+      await vi.advanceTimersByTimeAsync(600);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+        pc: 21,
+        field: "notes",
+        op: "set",
+        value: "typed",
+      });
+      // keepalive lets an unload-time save finish.
+      expect(fetchMock.mock.calls[0][1].keepalive).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes a pending notes edit when the page is hidden, before the debounce (#8)", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = opinionDom();
+      const fetchMock = vi.fn().mockResolvedValue(
+        jsonResponse({ prop: "opinions", pc: 21, value: { rating: 2, notes: "leaving" }, display: "2/6" }),
+      );
+      initSheet(root, fetchMock);
+
+      const notes = root.querySelector('[data-pc="21"] .chr-opinion__notes') as HTMLTextAreaElement;
+      notes.value = "leaving";
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      // The player navigates away before the debounce elapses.
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({
+        pc: 21,
+        field: "notes",
+        op: "set",
+        value: "leaving",
+      });
+      // The flushed timer must not fire a second, duplicate save.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
   it("stays inert when the viewer can neither edit nor opine", () => {
     const root = opinionDom({
       restUrl: "https://blog.test/wp-json/chronicler/v1/",
