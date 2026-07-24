@@ -93,6 +93,14 @@ foreach (['edit_post', 'read_post', 'delete_post', 'edit_posts', 'create_posts',
 check('mode options cover exactly RULE_MODES', array_keys(AdminPage::modeOptions()) === Schemas::RULE_MODES);
 check('mode details cover exactly RULE_MODES', array_keys(AdminPage::modeDetails()) === Schemas::RULE_MODES);
 check(
+    'treatment options are exactly the MESSAGE_VARIANTS vocabulary',
+    array_keys(AdminPage::treatmentOptions()) === ['ooc', 'important']
+);
+check('selectedTreatment picks a plain stored variant', AdminPage::selectedTreatment('ooc') === 'ooc');
+check('selectedTreatment collapses a legacy multi-value to the first variant', AdminPage::selectedTreatment('important, ooc') === 'ooc');
+check('selectedTreatment ignores unknown tokens', AdminPage::selectedTreatment('bogus') === '');
+check('selectedTreatment of blank is none', AdminPage::selectedTreatment('') === '');
+check(
     'field problems read as sentences',
     AdminPage::fieldProblem('pattern', 'is required') === 'Pattern is required.'
 );

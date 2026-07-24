@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.22.1
+Stable tag: 4.22.2
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.22.2 =
+* Transcription rule editor: the Treatment field is now a dropdown (None / Out of character / Important) instead of a free-text box. Previously the box showed a faint "ooc" placeholder that looked like a set value, so a Treatment rule saved with the field left blank silently applied no treatment. The dropdown makes the choice explicit; existing rules keep their treatment, and any legacy multi-value entry collapses to its first treatment.
 
 = 4.22.1 =
 * Character sheet text fields — including opinion Notes — now autosave as you type (#8). Previously they only saved when the field lost focus, so typing a note and then following a link, hitting Back, or closing the tab discarded the edit. Edits now persist shortly after you stop typing, and any still-pending change is flushed when you leave the page.

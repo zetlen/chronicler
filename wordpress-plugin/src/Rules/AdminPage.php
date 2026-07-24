@@ -90,6 +90,36 @@ final class AdminPage
         ];
     }
 
+    /**
+     * Labels for the treatment <select>, keyed by the message-variant
+     * vocabulary mirrored from lib/transform/variants.ts (MESSAGE_VARIANTS,
+     * pinned by a test). Pure.
+     */
+    public static function treatmentOptions(): array
+    {
+        return [
+            'ooc' => 'Out of character (ooc) — shows the author’s real name',
+            'important' => 'Important',
+        ];
+    }
+
+    /**
+     * The one treatment the <select> shows for a stored value: the first known
+     * variant in a (possibly legacy comma/space-separated) treatments string,
+     * or '' for none. Mirrors treatmentTokens() in lib/transform/rules.ts,
+     * collapsed to a single choice now that the field is a dropdown. Pure.
+     */
+    public static function selectedTreatment(string $treatments): string
+    {
+        $tokens = preg_split('/[\s,]+/', strtolower($treatments), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        foreach (array_keys(self::treatmentOptions()) as $variant) {
+            if (in_array($variant, $tokens, true)) {
+                return $variant;
+            }
+        }
+        return '';
+    }
+
     /** Notice wording per rejected field; Schemas::ruleErrors() decides. Pure. */
     public static function fieldProblem(string $field, string $problem): string
     {
@@ -192,13 +222,16 @@ final class AdminPage
             . ' transcript post by the <em>WordPress tag</em> mode.</p>';
         echo '</td></tr>';
 
-        echo '<tr><th scope="row"><label for="chronicler-rule-treatments">Treatment(s)</label></th><td>';
-        echo '<input type="text" id="chronicler-rule-treatments" name="' . esc_attr(self::FIELD)
-            . '[treatments]" class="regular-text code" value="' . esc_attr($config['treatments'])
-            . '" spellcheck="false" autocomplete="off" placeholder="ooc">';
-        echo '<p class="description">Comma-separated: <code>ooc</code> (out of character &#8212; shows the'
-            . ' author&#8217;s real name) and/or <code>important</code>; applied by the'
-            . ' <em>Treatment</em> mode.</p>';
+        echo '<tr><th scope="row"><label for="chronicler-rule-treatments">Treatment</label></th><td>';
+        echo '<select id="chronicler-rule-treatments" name="' . esc_attr(self::FIELD) . '[treatments]">';
+        $selectedTreatment = self::selectedTreatment((string) $config['treatments']);
+        echo '<option value=""' . selected($selectedTreatment, '', false) . '>&#8212; None &#8212;</option>';
+        foreach (self::treatmentOptions() as $variant => $label) {
+            echo '<option value="' . esc_attr($variant) . '"' . selected($selectedTreatment, $variant, false) . '>'
+                . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">Applied by the <em>Treatment</em> mode to matching messages.</p>';
         echo '</td></tr>';
 
         echo '<tr><th scope="row"><label for="chronicler-rule-description">Description</label></th><td>';
