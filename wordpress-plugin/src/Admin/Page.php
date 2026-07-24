@@ -88,6 +88,14 @@ final class Page
         //    default_content/default_title filters verify, so the template
         //    is only valid for the signed-in user and the nonce's lifetime —
         //    build links from a fresh page load, don't persist them.
+        //  - draftTemplates (#12): the Generation::templates() picker
+        //    entries, in display order (first = the picker's default). The
+        //    editor appends &chronicler_template=<slug> to the deep link;
+        //    the seeding filter falls back to its default on anything else.
+        $draftTemplates = [];
+        foreach (\Chronicler\Editor\Generation::templates() as $slug => $template) {
+            $draftTemplates[] = ['slug' => $slug, 'label' => $template['label']];
+        }
         wp_localize_script(self::SCRIPT_HANDLE, 'chroniclerBoot', [
             'apiBase' => esc_url_raw(rest_url(Routes::API_NAMESPACE)),
             'nonce' => wp_create_nonce('wp_rest'),
@@ -95,6 +103,7 @@ final class Page
                 'post-new.php?post_type=post&chronicler_session=%d&_wpnonce='
                 . wp_create_nonce(\Chronicler\Editor\Generation::NONCE_ACTION)
             ),
+            'draftTemplates' => $draftTemplates,
         ]);
         if (file_exists($this->distPath('chronicler-admin.css'))) {
             wp_enqueue_style(

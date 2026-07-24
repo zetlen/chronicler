@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.23.1
+Stable tag: 4.24.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.24.0 =
+* Draft templates: "Draft this session" can now start from an Adventure Log layout — a summary standfirst, a "Previously" recap, the session transcript, and Loot & Rewards / Next Time sections — picked from a new dropdown beside the button in the session editor. Both layouts (Adventure log, and the original minimal session log) are also registered as block patterns under a new "Chronicler" pattern category, so you can insert them into any post by hand.
 
 = 4.23.1 =
 * Character sheets: a game system's main attributes (number-type ratings like a Monster of the Week playbook's Charm/Cool/Sharp/Tough/Weird) once again read as headline stats. Each modifier is now a large boxed figure anchoring its row, with the label and the moves it rolls beside it, instead of a body-text number in a plain row. Applies to any game system's core stats out of the box, no per-system CSS needed.

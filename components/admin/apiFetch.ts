@@ -26,6 +26,15 @@ export interface ChroniclerBoot {
    * half ships independently.
    */
   draftSessionUrlTemplate?: string;
+  /**
+   * Draft templates (#12): the pattern-backed layouts a draft can seed, in
+   * display order — the first entry is the picker's default. The chosen
+   * slug rides the deep link as `chronicler_template`. Absent or shorter
+   * than two entries, the picker hides and the link carries no slug (the
+   * plugin then seeds its server-side default), so either half ships
+   * independently.
+   */
+  draftTemplates?: { slug: string; label: string }[];
 }
 
 declare global {

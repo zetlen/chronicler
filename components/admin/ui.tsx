@@ -8,6 +8,10 @@ export const LABEL_CLS = "block text-xs font-medium text-zinc-600 mb-1";
 export const SMALL_BUTTON_CLS =
   "rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50";
 
+/** A <select> sized to sit beside SMALL_BUTTON_CLS controls. */
+export const SMALL_SELECT_CLS =
+  "rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs font-medium text-zinc-700 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500";
+
 export const PRIMARY_BUTTON_CLS =
   "rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50";
 

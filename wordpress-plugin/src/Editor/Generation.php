@@ -24,11 +24,14 @@ use Chronicler\Store\Sessions;
  *    published post must never point readers at chronicler/v1/image. save()
  *    is null: generated output is never persisted by the placeholder itself.
  *
- * 2. The chronicler/session-log block pattern: placeholder + a layout
- *    skeleton (summary paragraph, More cut) mirroring what the Node publish
- *    flow used to assemble. Deliberately registered WITHOUT 'blockTypes'
- *    (in particular not core/post-content), so it stays a plain inserter
- *    pattern and never triggers the new-post pattern starter modal.
+ * 2. The draft-template block patterns (#12): each templates() entry is a
+ *    placeholder + a layout arrangement of plain core blocks, registered as
+ *    chronicler/<slug> under the "Chronicler" pattern category. session-log
+ *    mirrors what the Node publish flow used to assemble (summary paragraph,
+ *    More cut); adventure-log adds recap/loot/next-time sections around the
+ *    transcript. All are deliberately registered WITHOUT 'blockTypes' (in
+ *    particular not core/post-content), so they stay plain inserter patterns
+ *    and never trigger the new-post pattern starter modal.
  *
  * 3. Deep-link seeding: post-new.php?post_type=post&chronicler_session=<id>
  *    &_wpnonce=<nonce> pre-fills the new post via the core default_content /
@@ -38,8 +41,10 @@ use Chronicler\Store\Sessions;
  *    — Admin\Page hands the session editor a ready-made URL template in
  *    chroniclerBoot.draftSessionUrlTemplate), the chronicler_compose
  *    capability, and an existing Session; anything else returns the incoming
- *    value untouched. Seeded content suppresses the pattern starter modal,
- *    which is exactly right for this flow.
+ *    value untouched. An optional &chronicler_template=<slug> picks which
+ *    templates() entry seeds (the session editor's picker sets it); anything
+ *    unrecognized falls back to DEFAULT_TEMPLATE. Seeded content suppresses
+ *    the pattern starter modal, which is exactly right for this flow.
  *
  * 4. The "Chronicler" document sidebar (generate/sidebar.js):
  *    PluginDocumentSettingPanel (wp.editor global) with the tag/featured-
@@ -53,6 +58,10 @@ final class Generation
 {
     public const BLOCK = 'chronicler/session-placeholder';
     public const PATTERN = 'chronicler/session-log';
+    /** Pattern category all draft templates register under (#12). */
+    public const CATEGORY = 'chronicler';
+    /** templates() slug seeded when the deep link names no template. */
+    public const DEFAULT_TEMPLATE = 'session-log';
     /** Nonce action for the deep-link seeding contract (see class docblock). */
     public const NONCE_ACTION = 'chronicler_draft_session';
 
@@ -84,12 +93,15 @@ final class Generation
     }
 
     /** Scripts first (block.json names the placeholder handle), then the
-     *  block type and the pattern. */
+     *  block type, the pattern category, and the draft-template patterns. */
     public function setup(): void
     {
         $this->registerAssets();
         register_block_type(plugin_dir_path(CHRONICLER_PLUGIN_FILE) . 'generate/placeholder');
-        register_block_pattern(self::PATTERN, self::patternDefinition());
+        register_block_pattern_category(self::CATEGORY, ['label' => 'Chronicler']);
+        foreach (self::templates() as $slug => $template) {
+            register_block_pattern('chronicler/' . $slug, $template['pattern']);
+        }
     }
 
     private function registerAssets(): void
@@ -163,7 +175,7 @@ final class Generation
         if ($sessionId === null) {
             return is_string($content) ? $content : '';
         }
-        return self::seededContent($sessionId);
+        return self::seededContent($sessionId, self::requestedTemplateSlug($_GET));
     }
 
     /**
@@ -250,47 +262,111 @@ final class Generation
         return '<!-- wp:' . self::BLOCK . ' {"sessionId":' . $sessionId . '} /-->';
     }
 
-    /**
-     * The layout skeleton around a placeholder: a summary paragraph slot and
-     * a More cut — the same reading order the Node publish flow assembled
-     * (summary standfirst, More, transcript). Pure.
-     */
-    private static function skeleton(string $placeholder): string
+    /** An empty paragraph block carrying an editor placeholder hint. Pure. */
+    private static function placeholderParagraph(string $hint): string
+    {
+        $attrs = json_encode(['placeholder' => $hint], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return "<!-- wp:paragraph {$attrs} -->\n<p></p>\n<!-- /wp:paragraph -->";
+    }
+
+    /** An h2 heading block. $html is trusted literal markup text. Pure. */
+    private static function heading(string $html): string
+    {
+        return "<!-- wp:heading -->\n<h2 class=\"wp-block-heading\">{$html}</h2>\n<!-- /wp:heading -->";
+    }
+
+    /** The above-the-fold opening every template shares: a summary
+     *  standfirst slot and the More cut. Pure. */
+    private static function standfirst(): array
+    {
+        return [
+            self::placeholderParagraph('Session summary — a short standfirst shown above the fold.'),
+            "<!-- wp:more -->\n<!--more-->\n<!-- /wp:more -->",
+        ];
+    }
+
+    /** session-log content: standfirst + an unseeded placeholder — the same
+     *  reading order the Node publish flow assembled. Pure. */
+    public static function patternContent(): string
+    {
+        return implode("\n\n", [...self::standfirst(), self::placeholderBlock()]);
+    }
+
+    /** adventure-log content (#12): the standfirst, then recap / transcript /
+     *  loot / next-time sections. All core blocks except the placeholder, so
+     *  a GM can freely cut whatever a given week doesn't need. Pure. */
+    public static function adventureLogContent(): string
     {
         return implode("\n\n", [
-            "<!-- wp:paragraph {\"placeholder\":\"Session summary — a short standfirst shown above the fold.\"} -->\n<p></p>\n<!-- /wp:paragraph -->",
-            "<!-- wp:more -->\n<!--more-->\n<!-- /wp:more -->",
-            $placeholder,
+            ...self::standfirst(),
+            self::heading('Previously'),
+            self::placeholderParagraph('Where things stood — a quick recap for readers joining mid-campaign.'),
+            self::heading('The Session'),
+            self::placeholderBlock(),
+            self::heading('Loot &amp; Rewards'),
+            self::placeholderParagraph('Treasure, XP, boons, and favors earned this session.'),
+            self::heading('Next Time'),
+            self::placeholderParagraph('Cliffhangers, plans, and where the party goes from here.'),
         ]);
     }
 
-    /** Pattern content: skeleton + an unseeded placeholder. Pure. */
-    public static function patternContent(): string
+    /**
+     * The draft templates (#12), keyed by slug: 'label' names the entry in
+     * the session editor's picker (array order = picker order, first entry =
+     * the picker's default); 'pattern' is the register_block_pattern() args.
+     * Pure data; tests pin that every pattern's postTypes is exactly ['post']
+     * and that no 'blockTypes' key exists (a core/post-content blockTypes
+     * entry would put the pattern in the new-post starter modal).
+     */
+    public static function templates(): array
     {
-        return self::skeleton(self::placeholderBlock());
-    }
-
-    /** Seeded deep-link content: skeleton + the Session's placeholder. Pure. */
-    public static function seededContent(int $sessionId): string
-    {
-        return self::skeleton(self::placeholderBlock($sessionId));
+        return [
+            'adventure-log' => [
+                'label' => 'Adventure log',
+                'pattern' => [
+                    'title' => 'Chronicler adventure log',
+                    'description' => 'A full adventure-log write-up: a summary, a recap, the session transcript, and loot and next-time sections.',
+                    'categories' => [self::CATEGORY, 'text'],
+                    'postTypes' => ['post'],
+                    'content' => self::adventureLogContent(),
+                ],
+            ],
+            'session-log' => [
+                'label' => 'Session log (minimal)',
+                'pattern' => [
+                    'title' => 'Chronicler session log',
+                    'description' => 'A session-log post: a summary, a Read More break, and a transcript placeholder.',
+                    'categories' => [self::CATEGORY, 'text'],
+                    'postTypes' => ['post'],
+                    'content' => self::patternContent(),
+                ],
+            ],
+        ];
     }
 
     /**
-     * register_block_pattern() args. Pure data; tests pin that postTypes is
-     * exactly ['post'] and that no 'blockTypes' key exists (a
-     * core/post-content blockTypes entry would put the pattern in the
-     * new-post starter modal).
+     * The chronicler_template query arg when it names a known template,
+     * DEFAULT_TEMPLATE otherwise — an unrecognized slug degrades the layout
+     * choice, never the seeding. Pure.
+     *
+     * @param array<mixed> $get the request query args ($_GET)
      */
-    public static function patternDefinition(): array
+    public static function requestedTemplateSlug(array $get): string
     {
-        return [
-            'title' => 'Chronicler session log',
-            'description' => 'A session-log post: a summary, a Read More break, and a transcript placeholder.',
-            'categories' => ['text'],
-            'postTypes' => ['post'],
-            'content' => self::patternContent(),
-        ];
+        $raw = $get['chronicler_template'] ?? null;
+        if (is_string($raw) && array_key_exists($raw, self::templates())) {
+            return $raw;
+        }
+        return self::DEFAULT_TEMPLATE;
+    }
+
+    /** Seeded deep-link content: the template's pattern content with the
+     *  Session's id swapped into its placeholder block. Pure. */
+    public static function seededContent(int $sessionId, string $template = self::DEFAULT_TEMPLATE): string
+    {
+        $templates = self::templates();
+        $content = $templates[$template]['pattern']['content'] ?? self::patternContent();
+        return str_replace(self::placeholderBlock(), self::placeholderBlock($sessionId), $content);
     }
 
     /**

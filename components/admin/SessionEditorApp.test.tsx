@@ -4,6 +4,7 @@ import type { Root } from "react-dom/client";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { mountChroniclerAdmin, ROOT_ID } from "@/components/admin/mount";
 import { SessionEditorApp } from "@/components/admin/SessionEditorApp";
+import type { ChroniclerBoot } from "@/components/admin/apiFetch";
 import type { SessionFull, SessionLight } from "@/components/admin/sessionApi";
 import { customSchemeTemplate } from "@/lib/transform/styles";
 
@@ -51,7 +52,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function bootPage(extra: Record<string, string> = {}) {
+function bootPage(extra: Partial<ChroniclerBoot> = {}) {
   window.chroniclerBoot = {
     apiBase: "/wp-json/chronicler/v1",
     nonce: "test-nonce",
@@ -505,6 +506,37 @@ describe("editor view", () => {
     const link = (await screen.findByText("Draft this session")) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(
       "/wp-admin/post-new.php?chronicler_session=3&_wpnonce=abc",
+    );
+    // No draftTemplates in the boot (older plugin): no picker, bare link.
+    expect(screen.queryByLabelText("Draft template")).toBeNull();
+  });
+
+  it("appends the picked draft template to the deep link (#12)", async () => {
+    gotoRoute("session=3");
+    bootPage({
+      draftSessionUrlTemplate:
+        "/wp-admin/post-new.php?chronicler_session=%d&_wpnonce=abc",
+      draftTemplates: [
+        { slug: "adventure-log", label: "Adventure log" },
+        { slug: "session-log", label: "Session log (minimal)" },
+      ],
+    });
+    stubApi(EDITOR_ROUTES);
+    render(<SessionEditorApp />);
+    await screen.findByText("#session-log");
+
+    // The first boot entry is the picker's default and rides the href.
+    const href = () =>
+      (screen.getByText("Draft this session") as HTMLAnchorElement).getAttribute("href");
+    expect(href()).toBe(
+      "/wp-admin/post-new.php?chronicler_session=3&_wpnonce=abc&chronicler_template=adventure-log",
+    );
+
+    fireEvent.change(screen.getByLabelText("Draft template"), {
+      target: { value: "session-log" },
+    });
+    expect(href()).toBe(
+      "/wp-admin/post-new.php?chronicler_session=3&_wpnonce=abc&chronicler_template=session-log",
     );
   });
 

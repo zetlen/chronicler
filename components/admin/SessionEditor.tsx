@@ -52,6 +52,7 @@ import {
   PaneShell,
   PRIMARY_BUTTON_CLS,
   SMALL_BUTTON_CLS,
+  SMALL_SELECT_CLS,
   Toggle,
   WARN_NOTICE_CLS,
 } from "@/components/admin/ui";
@@ -140,6 +141,17 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
     () => (boot ? sessionImageProxyBase(boot) : undefined),
     [boot],
   );
+  // Draft templates (#12), malformed entries dropped. The first slug is the
+  // picker's default; an empty list means "no picker, no URL param".
+  const draftTemplates = useMemo(
+    () =>
+      (boot?.draftTemplates ?? []).filter(
+        (t) =>
+          typeof t?.slug === "string" && t.slug !== "" && typeof t?.label === "string",
+      ),
+    [boot],
+  );
+  const [draftTemplate, setDraftTemplate] = useState(draftTemplates[0]?.slug ?? "");
 
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [session, setSession] = useState<SessionFull | null>(null);
@@ -607,10 +619,16 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
   const activeCustomCss = isCustomScheme(scheme) ? sanitizeCss(customCss) : "";
   const darkBackdrop = scheme === "dark" || scheme === "custom-dark";
   const draftUrlTemplate = boot?.draftSessionUrlTemplate;
-  const draftUrl =
+  const draftBase =
     typeof draftUrlTemplate === "string" && draftUrlTemplate.includes("%d")
       ? draftUrlTemplate.replace("%d", String(session.id))
       : null;
+  // The picked template rides the deep link; without one (older plugin
+  // boot) the link stays bare and the server seeds its own default.
+  const draftUrl =
+    draftBase && draftTemplate
+      ? `${draftBase}&chronicler_template=${encodeURIComponent(draftTemplate)}`
+      : draftBase;
 
   // "Draft this session" navigates to a server action that seeds a post from
   // the session's STORED messages[]. A rule/filter edit made moments earlier
@@ -660,6 +678,21 @@ export function SessionEditor({ sessionId }: { sessionId: number }) {
             >
               Unsaved
             </span>
+          )}
+          {draftUrl && draftTemplates.length > 1 && (
+            <select
+              className={SMALL_SELECT_CLS}
+              value={draftTemplate}
+              onChange={(e) => setDraftTemplate(e.target.value)}
+              aria-label="Draft template"
+              title="The layout the drafted post starts from"
+            >
+              {draftTemplates.map((t) => (
+                <option key={t.slug} value={t.slug}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
           )}
           {draftUrl && (
             <a href={draftUrl} className={SMALL_BUTTON_CLS} onClick={handleDraftClick}>

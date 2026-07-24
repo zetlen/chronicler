@@ -12,6 +12,8 @@ use Chronicler\Editor\Generation;
 // ---------------------------------------------------------------------
 check('block name is chronicler/session-placeholder', Generation::BLOCK === 'chronicler/session-placeholder');
 check('pattern name is chronicler/session-log', Generation::PATTERN === 'chronicler/session-log');
+check('pattern category is chronicler', Generation::CATEGORY === 'chronicler');
+check('default template is session-log', Generation::DEFAULT_TEMPLATE === 'session-log');
 check('seeding nonce action is chronicler_draft_session', Generation::NONCE_ACTION === 'chronicler_draft_session');
 
 // ---------------------------------------------------------------------
@@ -55,17 +57,69 @@ check('pattern content is the skeleton with an unseeded placeholder',
     Generation::patternContent() === str_replace(' {"sessionId":41}', '', $seeded));
 
 // ---------------------------------------------------------------------
-// Pattern definition: plain inserter pattern for posts. blockTypes must be
-// ABSENT — a core/post-content entry there would surface the pattern in the
-// new-post starter modal, which #102 explicitly avoids.
+// Template registry (#12): every entry is a plain inserter pattern for
+// posts. blockTypes must be ABSENT — a core/post-content entry there would
+// surface the pattern in the new-post starter modal, which #102 explicitly
+// avoids.
 // ---------------------------------------------------------------------
-$pattern = Generation::patternDefinition();
-check('pattern targets exactly the post post type', ($pattern['postTypes'] ?? null) === ['post']);
-check('pattern registers NO blockTypes (starter modal stays off)', !array_key_exists('blockTypes', $pattern));
-check('pattern carries a title', is_string($pattern['title'] ?? null) && $pattern['title'] !== '');
-check('pattern content is patternContent()', ($pattern['content'] ?? null) === Generation::patternContent());
-check('pattern content contains the placeholder block', str_contains($pattern['content'], '<!-- wp:chronicler/session-placeholder /-->'));
-check('pattern uses a stock category', ($pattern['categories'] ?? null) === ['text']);
+$templates = Generation::templates();
+check('templates are adventure-log then session-log (picker order, first = default pick)',
+    array_keys($templates) === ['adventure-log', 'session-log']);
+check('default template slug exists in the registry', array_key_exists(Generation::DEFAULT_TEMPLATE, $templates));
+
+foreach ($templates as $slug => $template) {
+    $pattern = $template['pattern'] ?? null;
+    check("[$slug] carries a picker label", is_string($template['label'] ?? null) && $template['label'] !== '');
+    check("[$slug] targets exactly the post post type", ($pattern['postTypes'] ?? null) === ['post']);
+    check("[$slug] registers NO blockTypes (starter modal stays off)", !array_key_exists('blockTypes', $pattern));
+    check("[$slug] carries a title", is_string($pattern['title'] ?? null) && $pattern['title'] !== '');
+    check("[$slug] files under the chronicler category", in_array(Generation::CATEGORY, $pattern['categories'] ?? [], true));
+    check(
+        "[$slug] content contains exactly one unseeded placeholder (the seed swap point)",
+        substr_count($pattern['content'] ?? '', Generation::placeholderBlock()) === 1
+    );
+}
+
+check('session-log pattern content is patternContent()',
+    ($templates['session-log']['pattern']['content'] ?? null) === Generation::patternContent());
+check('adventure-log pattern content is adventureLogContent()',
+    ($templates['adventure-log']['pattern']['content'] ?? null) === Generation::adventureLogContent());
+
+$adventure = Generation::adventureLogContent();
+// Both templates share the above-the-fold opening: standfirst, then More.
+$standfirst = explode("\n\n" . Generation::placeholderBlock(), Generation::patternContent())[0];
+check('adventure log opens with the same standfirst + More cut as session-log',
+    str_contains($standfirst, '<!-- wp:more -->') && str_starts_with($adventure, $standfirst));
+check('adventure log carries the recap/session/loot/next-time sections',
+    str_contains($adventure, '>Previously<')
+    && str_contains($adventure, '>The Session<')
+    && str_contains($adventure, '>Loot &amp; Rewards<')
+    && str_contains($adventure, '>Next Time<'));
+check('adventure log headings use the 6.2+ serialized class (block validation)',
+    substr_count($adventure, '<h2 class="wp-block-heading">') === 4);
+
+// ---------------------------------------------------------------------
+// requestedTemplateSlug: the ?chronicler_template= parser. Anything but a
+// known slug means the default — layout degrades, seeding never does.
+// ---------------------------------------------------------------------
+check('no template param → default', Generation::requestedTemplateSlug([]) === Generation::DEFAULT_TEMPLATE);
+check('known slug passes through', Generation::requestedTemplateSlug(['chronicler_template' => 'adventure-log']) === 'adventure-log');
+check('default slug passes through', Generation::requestedTemplateSlug(['chronicler_template' => 'session-log']) === 'session-log');
+check('unknown slug → default', Generation::requestedTemplateSlug(['chronicler_template' => 'grocery-list']) === Generation::DEFAULT_TEMPLATE);
+check('array → default', Generation::requestedTemplateSlug(['chronicler_template' => ['adventure-log']]) === Generation::DEFAULT_TEMPLATE);
+check('empty string → default', Generation::requestedTemplateSlug(['chronicler_template' => '']) === Generation::DEFAULT_TEMPLATE);
+
+// ---------------------------------------------------------------------
+// Template-aware seeding: the chosen template's content with the session id
+// swapped into its placeholder.
+// ---------------------------------------------------------------------
+$seededAdventure = Generation::seededContent(41, 'adventure-log');
+check('adventure-log seeding swaps the placeholder in place',
+    $seededAdventure === str_replace(Generation::placeholderBlock(), Generation::placeholderBlock(41), $adventure));
+check('adventure-log seeding leaves no unseeded placeholder',
+    !str_contains($seededAdventure, Generation::placeholderBlock()));
+check('seededContent default template matches the one-arg call',
+    Generation::seededContent(41, Generation::DEFAULT_TEMPLATE) === Generation::seededContent(41));
 
 // ---------------------------------------------------------------------
 // titleFor: "#channel — <date>" with graceful fallbacks
