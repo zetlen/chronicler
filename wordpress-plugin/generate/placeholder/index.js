@@ -18,6 +18,11 @@
  * pure). A failed mirror warns on the console and leaves that src as-is —
  * it never blocks generation.
  *
+ * On completion it also stages the session's wp-tag rule tags on the post
+ * (deriveTags + the shared generate/session-tags.js), so a matching rule tags
+ * the draft automatically instead of waiting on the sidebar button. Best-
+ * effort like mirroring: a failure warns and never blocks the transcript.
+ *
  * Server-side registration comes from generate/placeholder/block.json via
  * register_block_type (Chronicler\Editor\Generation); the client re-declares
  * the same attribute schema so the registration is self-contained either way.
@@ -27,7 +32,7 @@
  * X-WP-Nonce contract holds with no extra wiring. A 403 (author without the
  * chronicler_compose capability) surfaces as the error state.
  */
-(function (wp, lib, mirror) {
+(function (wp, lib, mirror, tagsLib) {
   var el = wp.element.createElement;
   var useState = wp.element.useState;
   var useEffect = wp.element.useEffect;
@@ -192,6 +197,20 @@
         }
       }
       rewritten.messages = lib.rewriteImageUrls(messages, urlMap);
+
+      // Auto-apply the session's wp-tag rule tags the moment the transcript is
+      // generated — the same derivation the sidebar's "Apply tags from session"
+      // runs (deriveTags over the ruled messages), staged through the shared
+      // session-tags.js so both paths create terms and stage ids identically.
+      // Best-effort like image mirroring: a failure warns and never blocks the
+      // transcript. Staged with the blocks — both persist when the post saves.
+      try {
+        var tagNames = lib.deriveTags(rewritten, rules);
+        if (tagNames.length && tagsLib) await tagsLib.stageTags(tagNames);
+      } catch (tagErr) {
+        console.warn('Chronicler: could not auto-apply tags from the session.', tagErr);
+      }
+
       var tree = lib.sessionToBlocks(rewritten, {
         generatedAt: new Date().toISOString(),
         baseCss: window.chroniclerTranscriptBaseCss || '',
@@ -285,4 +304,4 @@
       return null;
     },
   });
-})(window.wp, window.chroniclerSessionBlocks, window.chroniclerMirror);
+})(window.wp, window.chroniclerSessionBlocks, window.chroniclerMirror, window.chroniclerSessionTags);

@@ -66,6 +66,10 @@ final class Generation
     public const ENGINE_HANDLE = 'chronicler-session-engine';
     /** Shared image mirror/parent REST plumbing (generate/mirror.js). */
     public const MIRROR_HANDLE = 'chronicler-session-mirror';
+    /** Shared wp.data tag-staging (generate/session-tags.js): find-or-create
+     *  post_tag terms + editPost({tags}), used by both the Generate flow's
+     *  auto-apply and the sidebar's "Apply tags from session" button. */
+    public const TAGS_HANDLE = 'chronicler-session-tags';
     /** Placeholder block editor script (named by block.json editorScript). */
     public const PLACEHOLDER_HANDLE = 'chronicler-session-placeholder';
     /** Document sidebar panel script. */
@@ -103,10 +107,12 @@ final class Generation
         // Mirror/parent REST plumbing shared by the placeholder's Generate
         // flow and the sidebar's featured-image action.
         wp_register_script(self::MIRROR_HANDLE, $url('mirror.js'), ['wp-api-fetch'], CHRONICLER_VERSION, true);
+        // Tag staging touches only the editor store, so it depends on wp-data.
+        wp_register_script(self::TAGS_HANDLE, $url('session-tags.js'), ['wp-data'], CHRONICLER_VERSION, true);
         wp_register_script(
             self::PLACEHOLDER_HANDLE,
             $url('placeholder/index.js'),
-            ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE],
+            ['wp-blocks', 'wp-element', 'wp-block-editor', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE, self::TAGS_HANDLE],
             CHRONICLER_VERSION,
             true
         );
@@ -120,7 +126,7 @@ final class Generation
         wp_register_script(
             self::SIDEBAR_HANDLE,
             $url('sidebar.js'),
-            ['wp-plugins', 'wp-editor', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE],
+            ['wp-plugins', 'wp-editor', 'wp-element', 'wp-components', 'wp-data', 'wp-api-fetch', self::LIB_HANDLE, self::ENGINE_HANDLE, self::MIRROR_HANDLE, self::TAGS_HANDLE],
             CHRONICLER_VERSION,
             true
         );
