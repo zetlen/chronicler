@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.23.0
+Stable tag: 4.23.1
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.23.1 =
+* Character sheets: a game system's main attributes (number-type ratings like a Monster of the Week playbook's Charm/Cool/Sharp/Tough/Weird) once again read as headline stats. Each modifier is now a large boxed figure anchoring its row, with the label and the moves it rolls beside it, instead of a body-text number in a plain row. Applies to any game system's core stats out of the box, no per-system CSS needed.
 
 = 4.23.0 =
 * WordPress tags now apply automatically when you generate a session transcript: if an attached wp-tag rule matches the log, its tag is staged on the draft as soon as generation finishes, instead of waiting for the "Apply tags from session" sidebar button. That button stays for re-applying after you edit a rule. Like the transcript itself, the tags are staged in the editor — save the post to keep them.

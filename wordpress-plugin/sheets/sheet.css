@@ -206,6 +206,57 @@
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+/* Main attributes (number-type ratings) are the sheet's headline stats, so the
+   modifier reads as the anchor of the row: a large boxed figure with the label
+   and the moves it rolls stacked beside it. Scoped to [data-type="number"] so
+   it lands on any game system's core stats with no attribute-id or section-name
+   hardcoding. The :has() guard limits the two-column reflow to the static
+   (published) view; the editable stepper row keeps its inline layout, with the
+   live value enlarged to match. */
+.chr-prop[data-type="number"]:has(> .chr-prop__static) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "value label"
+    "value detail";
+  align-items: center;
+  column-gap: 0.9rem;
+  row-gap: 0.1rem;
+  padding: 0.5rem 0;
+}
+.chr-prop[data-type="number"]:has(> .chr-prop__static) > .chr-prop__label {
+  grid-area: label;
+  align-self: end;
+  min-width: 0;
+  font-size: 1.05rem;
+}
+.chr-prop[data-type="number"]:has(> .chr-prop__static) > .chr-prop__detail {
+  grid-area: detail;
+  align-self: start;
+}
+.chr-prop[data-type="number"] > .chr-prop__static {
+  grid-area: value;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 2.4em;
+  padding: 0.12em 0.25em;
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  border: 2px solid var(--chr-border);
+  border-radius: 8px;
+  background: rgba(153, 117, 0, 0.08);
+}
+/* Editable inline view keeps the stepper row; just enlarge the live number so
+   it still reads as a headline stat while you tick it up and down. */
+.chr-prop[data-type="number"] .chr-prop__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
 .chr-checklist {
   list-style: none;
   margin: 0;
