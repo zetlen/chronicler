@@ -24,6 +24,10 @@ const sheetsPhp = readFileSync(
   join(ROOT, "wordpress-plugin", "sheets", "rest.php"),
   "utf8",
 );
+const inboundPhp = readFileSync(
+  join(ROOT, "wordpress-plugin", "src", "Slack", "Inbound.php"),
+  "utf8",
+);
 
 const HTTP_METHODS = ["get", "post", "put", "delete", "patch"] as const;
 
@@ -62,10 +66,25 @@ function sheetsSurface(): Map<string, string[]> {
   return surface;
 }
 
+/** (openapi path) -> lowercase methods, from src/Slack/Inbound.php source. */
+function inboundSurface(): Map<string, string[]> {
+  const surface = new Map<string, string[]>();
+  const entry =
+    /register_rest_route\('chronicler\/v1', '(\/[^']*)', \[\s*\n\s*'methods' => '([A-Z]+)'/g;
+  for (const match of inboundPhp.matchAll(entry)) {
+    const path = toOpenapiPath(match[1]);
+    surface.set(path, [...(surface.get(path) ?? []), match[2].toLowerCase()]);
+  }
+  return surface;
+}
+
 /** The union: every chronicler/v1 route the plugin registers. */
 function phpSurface(): Map<string, string[]> {
   const surface = coreSurface();
   for (const [path, methods] of sheetsSurface()) {
+    surface.set(path, [...(surface.get(path) ?? []), ...methods]);
+  }
+  for (const [path, methods] of inboundSurface()) {
     surface.set(path, [...(surface.get(path) ?? []), ...methods]);
   }
   return surface;
@@ -85,6 +104,7 @@ function specSurface(): Map<string, string[]> {
 describe("openapi.yaml stays honest against the plugin's registered routes", () => {
   const core = coreSurface();
   const sheets = sheetsSurface();
+  const inbound = inboundSurface();
   const php = phpSurface();
   const yaml = specSurface();
 
@@ -101,9 +121,13 @@ describe("openapi.yaml stays honest against the plugin's registered routes", () 
     expect(sheets.size).toBe(
       (sheetsPhp.match(/register_rest_route\(/g) ?? []).length,
     );
-    // The two tables must not overlap — a shared path would merge here and
+    expect(inbound.size).toBeGreaterThan(0);
+    expect(inbound.size).toBe(
+      (inboundPhp.match(/register_rest_route\(/g) ?? []).length,
+    );
+    // The tables must not overlap — a shared path would merge here and
     // hide a collision the router would happily serve.
-    expect(php.size).toBe(core.size + sheets.size);
+    expect(php.size).toBe(core.size + sheets.size + inbound.size);
   });
 
   it("documents exactly the routes the plugin registers", () => {

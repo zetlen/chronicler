@@ -178,6 +178,7 @@ function chronicler_sheets_render_configurator(): void {
 function chronicler_sheets_add_meta_boxes(): void {
     add_meta_box('chronicler-npc', 'NPC', 'chronicler_sheets_render_npc_box', 'chr_character', 'side');
     add_meta_box('chronicler-active', 'Active Character', 'chronicler_sheets_render_active_box', 'chr_character', 'side');
+    add_meta_box('chronicler-slack-member', 'Slack member', 'chronicler_sheets_render_slack_box', 'chr_character', 'side');
     // The tagline field under the title IS the excerpt; don't show it twice.
     remove_meta_box('postexcerpt', 'chr_character', 'normal');
 }
@@ -313,6 +314,115 @@ function chronicler_sheets_save_active_box(int $post_id): void {
     }
 }
 add_action('save_post_chr_character', 'chronicler_sheets_save_active_box', 9);
+
+/**
+ * The Slack member box: which Slack account drives this character. This is
+ * the ONE self-service surface for identity linking — a player reaches it
+ * only for their own sheet, because chr_character's map_meta_cap wiring
+ * limits editing to the author (plus edit_others_chr_characters for GMs).
+ * That access IS the authorization; the bot only tells a player their id
+ * and links them here (Bot\Commands::link()).
+ *
+ * Everyone gets the plain id field, so the flow matches what the bot hands
+ * out (paste this string). Anyone who can edit OTHER people's characters
+ * also gets the workspace picker, which is a GM/admin convenience — and
+ * deliberately not offered to players, for whom browsing the roster of
+ * Slack accounts to attach is not a thing to encourage.
+ */
+function chronicler_sheets_render_slack_box(WP_Post $post): void {
+    wp_nonce_field('chronicler_slack_box', 'chronicler_slack_nonce');
+    $value = (string) get_post_meta($post->ID, 'chronicler_slack_user_id', true);
+    $directory = current_user_can('edit_others_chr_characters')
+        ? chronicler_sheets_slack_user_directory()
+        : null;
+
+    if (is_array($directory)) {
+        if ($value !== '' && !isset($directory[$value])) {
+            $directory[$value] = $value;
+        }
+        asort($directory, SORT_FLAG_CASE | SORT_STRING);
+        echo '<select name="chronicler_slack_user_id" class="widefat">';
+        echo '<option value="">— not linked —</option>';
+        foreach ($directory as $id => $name) {
+            echo '<option value="' . esc_attr($id) . '" ' . selected($value, $id, false) . '>'
+                . esc_html($name) . '</option>';
+        }
+        echo '</select>';
+    } else {
+        echo '<input type="text" name="chronicler_slack_user_id" class="widefat" value="'
+            . esc_attr($value) . '" placeholder="U0123ABCDEF" spellcheck="false">';
+    }
+
+    echo '<p class="description">In Slack, run <code>/game link '
+        . esc_html(chronicler_sheets_display_name_for(
+            (string) get_post_meta($post->ID, 'chr_goes_by', true),
+            get_the_title($post)
+        ))
+        . '</code> — the bot replies with the id to paste here. Saving it lets that Slack account use this character\'s stats and dice.</p>';
+}
+
+/**
+ * One Slack id may drive only one character: a second claim would make
+ * chronicler_sheets_character_for_slack_id() arbitrary. Returns the
+ * conflicting character id, or null when the id is free.
+ */
+function chronicler_sheets_slack_id_conflict(string $slack_id, int $post_id): ?int {
+    if ($slack_id === '') {
+        return null;
+    }
+    $others = get_posts([
+        'post_type' => 'chr_character',
+        'post_status' => 'any',
+        'meta_key' => 'chronicler_slack_user_id',
+        'meta_value' => $slack_id,
+        'exclude' => [$post_id],
+        'numberposts' => 1,
+        'fields' => 'ids',
+    ]);
+    return $others ? (int) $others[0] : null;
+}
+
+/**
+ * Saves at priority 9, like the Active box. Refuses rather than steals when
+ * the id is already claimed: silently moving a link would let one player
+ * capture another's Slack commands, and the admin notice names the sheet to
+ * clear first.
+ */
+function chronicler_sheets_save_slack_box(int $post_id): void {
+    if (
+        !isset($_POST['chronicler_slack_nonce'])
+        || !wp_verify_nonce($_POST['chronicler_slack_nonce'], 'chronicler_slack_box')
+        || !current_user_can('edit_post', $post_id)
+    ) {
+        return;
+    }
+    $slack_id = sanitize_text_field(wp_unslash($_POST['chronicler_slack_user_id'] ?? ''));
+    if ($slack_id === '') {
+        delete_post_meta($post_id, 'chronicler_slack_user_id');
+        return;
+    }
+    $conflict = chronicler_sheets_slack_id_conflict($slack_id, $post_id);
+    if ($conflict !== null) {
+        set_transient('chronicler_slack_link_conflict_' . get_current_user_id(), $conflict, 60);
+        return;
+    }
+    update_post_meta($post_id, 'chronicler_slack_user_id', $slack_id);
+}
+add_action('save_post_chr_character', 'chronicler_sheets_save_slack_box', 9);
+
+/** Surfaces the refusal above on the next sheet load. */
+function chronicler_sheets_slack_conflict_notice(): void {
+    $key = 'chronicler_slack_link_conflict_' . get_current_user_id();
+    $conflict = get_transient($key);
+    if (!$conflict) {
+        return;
+    }
+    delete_transient($key);
+    echo '<div class="notice notice-error"><p>That Slack member is already linked to <strong>'
+        . esc_html(get_the_title((int) $conflict))
+        . '</strong>, so this sheet was left unlinked. Clear it there first, then save this one.</p></div>';
+}
+add_action('admin_notices', 'chronicler_sheets_slack_conflict_notice');
 
 // --- Slack id on the user profile -------------------------------------------
 

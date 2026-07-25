@@ -32,3 +32,18 @@ check('parse skips deleted users', !array_key_exists('U4', $parsed));
 check('parse skips bots', !array_key_exists('U5', $parsed));
 check('parse skips USLACKBOT', !array_key_exists('USLACKBOT', $parsed));
 check('parse falls back to id when all names are empty', ($parsed['U6'] ?? null) === 'U6');
+
+// --- match_display_name(): goes-by lookup for /game link ---------------------
+$roster = [11 => 'Alec', 22 => 'Brannagh the Bold', 33 => 'cyrus'];
+check('exact match resolves', chronicler_sheets_match_display_name('Alec', $roster) === 11);
+check('match is case-insensitive downward', chronicler_sheets_match_display_name('alec', $roster) === 11);
+check('match is case-insensitive upward', chronicler_sheets_match_display_name('CYRUS', $roster) === 33);
+check('surrounding whitespace is ignored', chronicler_sheets_match_display_name('  Alec  ', $roster) === 11);
+check('multi-word names match whole', chronicler_sheets_match_display_name('brannagh the bold', $roster) === 22);
+check('a partial name does not match', chronicler_sheets_match_display_name('bran', $roster) === null);
+check('an unknown name is null', chronicler_sheets_match_display_name('Zoltan', $roster) === null);
+check('an empty query is null', chronicler_sheets_match_display_name('   ', $roster) === null);
+check('an empty roster is null', chronicler_sheets_match_display_name('Alec', []) === null);
+// Duplicate log names are possible (two PCs both "goes by" the same handle);
+// first in index order wins so the reply is deterministic.
+check('duplicate names resolve to the first', chronicler_sheets_match_display_name('Alec', [11 => 'Alec', 44 => 'alec']) === 11);

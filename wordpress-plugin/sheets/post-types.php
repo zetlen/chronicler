@@ -304,12 +304,29 @@ function chronicler_sheets_set_value(int $post_id, array $property, $value): voi
 }
 
 /**
- * The character a Slack user acts on: their chr_active character, else their
- * most recent published one. Null when the Slack id is unmapped or sheetless.
+ * The character a Slack user acts on: the character whose own sheet claims
+ * that Slack id, else — for links made on the WP profile — their author's
+ * chr_active character, else that author's most recent published one. Null
+ * when the Slack id is unmapped or sheetless.
  */
 function chronicler_sheets_character_for_slack_id(string $slack_id): ?WP_Post {
     if ($slack_id === '') {
         return null;
+    }
+    // A character linked on its own sheet wins: it is the self-service path
+    // (sheets/admin.php's Slack member box) and it names a character
+    // directly, with no active-character guesswork. The user-meta chain
+    // below stays as the fallback — it still serves installs linked before
+    // the box existed, and staff/GMs who have no character of their own.
+    $linked = get_posts([
+        'post_type' => 'chr_character',
+        'post_status' => 'publish',
+        'meta_key' => 'chronicler_slack_user_id',
+        'meta_value' => $slack_id,
+        'numberposts' => 1,
+    ]);
+    if ($linked) {
+        return $linked[0];
     }
     $users = get_users([
         'meta_key' => 'chronicler_slack_user_id',

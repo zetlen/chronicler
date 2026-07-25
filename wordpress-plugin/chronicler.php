@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Chronicler
  * Description: Chronicles Slack RPG sessions — a wp-admin session editor, transcripts as Gutenberg blocks, and schema-driven character sheets.
- * Version: 4.24.0
+ * Version: 4.25.0
  * Requires at least: 6.2
  * Requires PHP: 8.2
  * License: GPLv3 or later
@@ -53,6 +53,11 @@ require_once __DIR__ . '/sheets/index.php';
 require_once __DIR__ . '/admin/page.php';
 
 (new Chronicler\Rest\Routes())->register();
+// The bot skeleton's inbound Slack surface (#7): signature-verified slash
+// commands + interactivity. Deliberately reverses #104's outbound-only
+// policy — src/Slack/Inbound.php carries the replacement policy, the
+// 2026-07-24 bot spec the reasoning.
+Chronicler\Slack\Inbound::register();
 Chronicler\Store\Rules::register();
 // The wp-admin CRUD screen for Rules (#109): metabox editor, save
 // validation shared with the REST layer, list-table columns.

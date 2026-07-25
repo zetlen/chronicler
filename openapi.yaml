@@ -127,6 +127,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /slack/inbound/commands:
+    post:
+      tags: [slack]
+      operationId: slackInboundCommands
+      summary: Slash-command Request URL (Slack-signed; not for API clients)
+      description: |
+        The /game slash command posts here. Authentication is Slack's
+        request signature — X-Slack-Signature (HMAC-SHA256 of
+        v0:{timestamp}:{raw body} with the site's signing secret) plus
+        X-Slack-Request-Timestamp within 300s — verified before any other
+        work. Not basic auth: API clients have no business here. 401 on
+        verification failure; 503 when no signing secret is configured.
+      security: []
+      requestBody:
+        description: Slack's form-encoded slash-command payload.
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: The command's reply, rendered by Slack (in-body response).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          description: Signature verification failed.
+        "503":
+          description: No signing secret configured; the surface is disabled.
+
+  /slack/inbound/interactions:
+    post:
+      tags: [slack]
+      operationId: slackInboundInteractions
+      summary: Interactivity Request URL (Slack-signed; not for API clients)
+      description: |
+        Message-shortcut and block-action payloads (a form-encoded `payload`
+        JSON field) post here. Same signature authentication as
+        /slack/inbound/commands. The skeleton acks with an empty 200 and
+        replies through the payload's response_url; session clipping
+        (phase 3) fills this in.
+      security: []
+      requestBody:
+        description: Slack's form-encoded interactivity payload.
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Acknowledged.
+        "401":
+          description: Signature verification failed.
+        "503":
+          description: No signing secret configured; the surface is disabled.
+
   /sessions:
     get:
       tags: [sessions]

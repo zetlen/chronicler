@@ -21,8 +21,11 @@ use WP_REST_Response;
  * requires (#159): session drafting and its supporting reads take
  * Capabilities::COMPOSE, settings/rules/import writes take MANAGE, and the
  * Slack proxy takes SLACK_READ — so delegating compose to a role hands out
- * drafting only. The plugin has no inbound Slack surface (#104 closed — all
- * Slack traffic is outbound through the slack/* proxy).
+ * drafting only. Outbound Slack traffic goes through the slack/* proxy;
+ * the ONE inbound Slack surface is Slack\Inbound (slack/inbound/*,
+ * Slack-signature-authenticated, registered on its own hook because this
+ * table's capability contract can't express it — the bot skeleton's
+ * deliberate reversal of #104).
  *
  * This table is not the whole namespace: the character-sheet routes
  * (sheets/rest.php) register on their own rest_api_init hook with

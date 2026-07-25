@@ -97,6 +97,13 @@ require __DIR__ . '/rules-admin.test.php';
 require __DIR__ . '/../src/Settings/Screen.php';
 require __DIR__ . '/settings.test.php';
 
+require __DIR__ . '/../src/Slack/Signature.php';
+require __DIR__ . '/../src/Slack/Bot/Commands.php';
+require __DIR__ . '/../src/Slack/Bot/Link.php';
+require __DIR__ . '/../src/Slack/Inbound.php';
+require __DIR__ . '/../src/Slack/Deferred.php';
+require __DIR__ . '/slack-inbound.test.php';
+
 require __DIR__ . '/../src/Slack/ApiError.php';
 require __DIR__ . '/../src/Slack/RateLimited.php';
 require __DIR__ . '/../src/Slack/Client.php';

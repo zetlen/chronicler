@@ -14,6 +14,27 @@ function chronicler_sheets_display_name_for(string $goes_by, string $title): str
 }
 
 /**
+ * Resolve a typed name to one character id, case-insensitively, against a
+ * [postId => display name] map (the display name being what
+ * chronicler_sheets_display_name_for() returns). Whole-name matching only —
+ * a prefix must not silently pick a character, since the reply hands out an
+ * edit link. Ties go to the first candidate, so the caller's ordering (the
+ * character index order) decides. Pure; unit-tested in tests/run.php.
+ */
+function chronicler_sheets_match_display_name(string $query, array $candidates): ?int {
+    $needle = trim($query);
+    if ($needle === '') {
+        return null;
+    }
+    foreach ($candidates as $id => $name) {
+        if (is_string($name) && strcasecmp(trim($name), $needle) === 0) {
+            return (int) $id;
+        }
+    }
+    return null;
+}
+
+/**
  * Map a Slack users.list `members` array to [id => display name], preferring
  * display_name, then real_name, then the handle, then the id. Deleted users,
  * bots, and Slackbot are dropped — none of them play characters.

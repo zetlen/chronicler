@@ -26,6 +26,8 @@
  *    wp user add-cap bot-account flow)
  *  - posts of the plugin's CPTs (chr_character, chr_template,
  *    chronicler_rule) in EVERY status incl. trash + all their meta
+ *  - the chronicler_slack_user_id POST meta (sheets/admin.php's Slack member
+ *    box) — scrubbed by key as well, so no row outlives its character
  *  - unused mirrored Slack attachments + files      (Media\Mirror; see below
  *    for the ones published content still uses)
  *  - the mirror eviction cron event                 (Media\Mirror::CRON_HOOK)
@@ -139,6 +141,12 @@ function chronicler_uninstall_site(): void
     ) {
         wp_delete_post((int) $post_id, true);
     }
+    //    The Slack-member link a character carries on its own sheet
+    //    (sheets/admin.php's Slack member box). The force-deletes above take
+    //    the meta of every post the query reached; scrubbing by key too is
+    //    the same belt-and-braces the mirror markers get below, and it is the
+    //    post-meta half of the user meta deleted network-wide at the bottom.
+    delete_post_meta_by_key('chronicler_slack_user_id');
 
     // 5. Unused mirrored Slack attachments — force delete removes files and
     //    meta. post_parent 0 confines this to mirrors nothing published ever

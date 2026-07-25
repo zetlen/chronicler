@@ -1,5 +1,9 @@
-# Chronicler's Slack app manifest — universal, scopes-only (since 4.0.0).
-# Surfaced in wp-admin → Chronicler → Settings; copy it there to create the app.
+# Chronicler's Slack app manifest — site-templated since 4.25.0 (the bot
+# skeleton ended the universal scopes-only era: slash-command and
+# interactivity Request URLs must point at YOUR site). {{REST_BASE}} is
+# resolved to this site's chronicler/v1 REST base when the Settings page
+# renders it; copy the manifest FROM wp-admin → Chronicler → Settings, not
+# from this file.
 display_information:
   name: Chronicler
   description: The Matter of Slack
@@ -10,6 +14,21 @@ features:
   bot_user:
     display_name: Chronicler
     always_online: false
+  slash_commands:
+    - command: /game
+      url: "{{REST_BASE}}/slack/inbound/commands"
+      description: Campaign tools — sheets, dice, session clipping
+      usage_hint: "help | link | stats | sheet | roll <stat>"
+      should_escape: false
+  shortcuts:
+    - name: "Clip: session start"
+      type: message
+      callback_id: chronicler_clip_start
+      description: Mark this message as the start of a session transcript
+    - name: "Clip: session end"
+      type: message
+      callback_id: chronicler_clip_end
+      description: Mark this message as the end of a session transcript
 
 oauth_config:
   scopes:
@@ -21,8 +40,13 @@ oauth_config:
       - users:read       # resolve user IDs to display names
       - emoji:read       # workspace custom emoji, rendered in transcripts
       - files:read       # read file/image bytes for the image mirror
+      - commands         # the /game slash command
+      - chat:write       # announcer rail (phase 4); replies ride response_url
 
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false
+  interactivity:
+    is_enabled: true
+    request_url: "{{REST_BASE}}/slack/inbound/interactions"
