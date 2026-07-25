@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.27.0
+Stable tag: 4.28.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.28.0 =
+* Gear that knows its own numbers: dice on a list entry can now reference the entry's own fields with {entry["…"]} — write 1d8 + {entry["harm_rating"]} on a weapon and /game roll adds that weapon's harm rating, not a character stat. Entry fields live only behind the entry name, so a gear entry's "harm" never collides with the character's Harm track. A reference to a field the entry doesn't have, or one that isn't a number, comes back as a clear error instead of quietly rolling a 0.
 
 = 4.27.0 =
 * A move carries its own roll: a list on the character sheet (Moves, Gear) can declare a dice field, and any entry with dice written on it — "2d6 + {sharp}" on the move you already have — shows up in /game roll alongside the system's rolls, named after the entry. Gate the dice on the entry's "has it" toggle with when: and untaken moves stay quiet. The game system's rolls no longer need a per-character "when": that key is removed, and the GM never edits the system just because a player advanced. A dice string that doesn't parse simply offers no roll (the sheet editor flags it); nothing else on the sheet is affected.

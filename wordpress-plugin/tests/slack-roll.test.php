@@ -32,6 +32,8 @@ $chr_roll_template = chronicler_sheets_parse_template(json_encode([
             ['id' => 'nine_lives', 'label' => 'Nine Lives'],
         ]],
         ['id' => 'curse', 'label' => 'Curse', 'type' => 'number', 'min' => 0, 'max' => 6, 'gm_only' => true],
+        ['id' => 'harm', 'label' => 'Harm', 'type' => 'track', 'length' => 7],
+        ['id' => 'look', 'label' => 'Look', 'type' => 'text'],
         // A list whose entries can carry their own dice (2026-07-25). Empty by
         // default, so sheets that don't set it contribute nothing and every
         // pre-existing assertion below is undisturbed.
@@ -40,6 +42,18 @@ $chr_roll_template = chronicler_sheets_parse_template(json_encode([
             ['id' => 'effect', 'label' => 'Description', 'type' => 'longtext'],
             ['id' => 'has', 'label' => 'Has it', 'type' => 'toggle'],
             ['id' => 'dice', 'label' => 'Roll', 'type' => 'dice', 'when' => 'has'],
+        ]],
+        // Phase B's motivating shape: gear whose dice add the gear's OWN
+        // numbers. The entry-level `harm` field deliberately shares its name
+        // with the character-level track above — the entry namespace exists
+        // because that collision is real on the live MotW sheet.
+        ['id' => 'gear', 'label' => 'Gear', 'type' => 'list', 'fields' => [
+            ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['id' => 'notes', 'label' => 'Notes', 'type' => 'longtext'],
+            ['id' => 'weapon', 'label' => 'Weapon?', 'type' => 'toggle'],
+            ['id' => 'harm_rating', 'label' => 'Harm Rating', 'type' => 'number', 'min' => 0, 'max' => 5],
+            ['id' => 'harm', 'label' => 'Harm', 'type' => 'number', 'min' => 0, 'max' => 5],
+            ['id' => 'roll', 'label' => 'Roll', 'type' => 'dice', 'when' => 'weapon'],
         ]],
     ],
     'layout' => [
@@ -85,7 +99,7 @@ $chr_roll_sheet = function (array $values, array $hidden = []) use ($chr_roll_te
         'properties' => $props,
     ];
 };
-$chr_roll_values = ['cool' => 2, 'sharp' => 3, 'tough' => -1, 'weird' => 1, 'luck' => 5, 'curse' => 4, 'moves' => []];
+$chr_roll_values = ['cool' => 2, 'sharp' => 3, 'tough' => -1, 'weird' => 1, 'luck' => 5, 'curse' => 4, 'moves' => [], 'harm' => 3, 'look' => 'Wiry, watchful'];
 $player_sheet = $chr_roll_sheet($chr_roll_values, ['curse']);
 $gm_sheet = $chr_roll_sheet($chr_roll_values);
 
@@ -333,6 +347,107 @@ $chr_sheet_only_empty = [
 $empty_union = Roll::respond('anything', $chr_sheet_only_template, $chr_sheet_only_empty, $url, $scripted([1]));
 check('an empty union still says no rolls', str_contains(strtolower($empty_union['text']), 'no rolls'));
 check('… and mentions dice on the sheet as the other source', str_contains(strtolower($empty_union['text']), 'dice'));
+
+// --- entry["…"] placeholders (2026-07-25 Phase B) -----------------------------
+// A character-carried roll may reach the entry that declared it, through the
+// `entry` namespace only. This is why gear damage works on paper: a weapon's
+// dice add the weapon's OWN harm rating, not a character stat.
+
+$chr_gear_rows = [
+    ['name' => 'Machete', 'notes' => 'Big knife. Never jams.', 'weapon' => true, 'harm_rating' => 2, 'harm' => 1,
+     'roll' => '1d8 + {entry["harm_rating"]}'],
+    ['name' => 'Crossbow', 'notes' => '', 'weapon' => true, 'harm_rating' => 3, 'harm' => 0,
+     'roll' => '1d6 + {entry["harm_rating"]}'],
+];
+$gear_sheet = $chr_roll_sheet(['gear' => $chr_gear_rows] + $chr_roll_values, ['curse']);
+
+$machete = Roll::respond('machete', $chr_roll_template, $gear_sheet, $url, $scripted([5]));
+$machete_text = json_encode($machete, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+check('entry["…"] rolls with the entry\'s own number (5 + rating 2 = 7)', $machete['response_type'] === 'in_channel'
+    && str_contains($machete_text, '+2') && str_contains($machete_text, '=  *7*'));
+check('… showing the notation as written', str_contains($machete['text'], '1d8 + {entry["harm_rating"]}'));
+$crossbow_text = json_encode(
+    Roll::respond('crossbow', $chr_roll_template, $gear_sheet, $url, $scripted([2])),
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
+check('two entries in one list roll their own values (2 + rating 3 = 5)', str_contains($crossbow_text, '+3')
+    && str_contains($crossbow_text, '=  *5*'));
+
+// The shadowing case the namespace exists for: the character has a `harm`
+// TRACK (current 3) and the entry a `harm` NUMBER (1). One expression, both
+// meanings, no silent winner.
+$shadow_sheet = $chr_roll_sheet(['gear' => [
+    ['name' => 'Cursed Blade', 'notes' => '', 'weapon' => true, 'harm_rating' => 0, 'harm' => 1,
+     'roll' => '1d8 + {harm["current"]} + {entry["harm"]}'],
+]] + $chr_roll_values, ['curse']);
+$shadow_text = json_encode(
+    Roll::respond('cursed blade', $chr_roll_template, $shadow_sheet, $url, $scripted([4])),
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
+check('{harm["current"]} resolves the character\'s track', str_contains($shadow_text, '+3'));
+check('{entry["harm"]} resolves the entry (4 + 3 + 1 = 8)', str_contains($shadow_text, '+1')
+    && str_contains($shadow_text, '=  *8*'));
+
+// An unknown entry field fails LOUD at roll time — roll_dice() would read it
+// as 0, and a quietly wrong total is the one thing a dice bot must never post.
+$mystery_sheet = $chr_roll_sheet(['gear' => [
+    ['name' => 'Mystery Tool', 'notes' => '', 'weapon' => true, 'harm_rating' => 1, 'harm' => 0,
+     'roll' => '1d8 + {entry["nonesuch"]}'],
+    $chr_gear_rows[0],
+]] + $chr_roll_values, ['curse']);
+$mystery = Roll::respond('mystery tool', $chr_roll_template, $mystery_sheet, $url, $scripted([5]));
+check('an unknown entry field errors loudly, never a silent 0', $mystery['response_type'] === 'ephemeral'
+    && str_contains($mystery['text'], "didn't work out")
+    && str_contains($mystery['text'], 'nonesuch'));
+// Inert read unchanged: the bad expression costs its neighbors nothing.
+$mystery_menu = json_encode(
+    Roll::respond('', $chr_roll_template, $mystery_sheet, $url, $scripted([])),
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
+check('a bad entry expression still lists, and lists its neighbors', str_contains($mystery_menu, 'Mystery Tool')
+    && str_contains($mystery_menu, 'Machete'));
+check('… and the neighbor still rolls', str_contains(
+    json_encode(Roll::respond('machete', $chr_roll_template, $mystery_sheet, $url, $scripted([5])), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    '=  *7*'
+));
+
+// Mixed refs keep the security rule: {curse} is gm_only, and riding next to
+// an entry ref changes nothing about it — refuse the player, roll for the GM.
+$hexed_rows = [['name' => 'Hexed Gun', 'notes' => '', 'weapon' => true, 'harm_rating' => 2, 'harm' => 0,
+    'roll' => '1d6 + {curse} + {entry["harm_rating"]}']];
+$hexed_player = Roll::respond(
+    'hexed gun',
+    $chr_roll_template,
+    $chr_roll_sheet(['gear' => $hexed_rows] + $chr_roll_values, ['curse']),
+    $url,
+    $scripted([2])
+);
+check('mixed refs: a gm_only stat still refuses for a player', $hexed_player['response_type'] === 'ephemeral'
+    && str_contains(strtolower($hexed_player['text']), "can't see"));
+$hexed_gm = Roll::respond(
+    'hexed gun',
+    $chr_roll_template,
+    $chr_roll_sheet(['gear' => $hexed_rows] + $chr_roll_values),
+    $url,
+    $scripted([2])
+);
+check('mixed refs: the GM rolls it (2 + curse 4 + rating 2 = 8)', $hexed_gm['response_type'] === 'in_channel'
+    && str_contains(json_encode($hexed_gm, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), '=  *8*'));
+
+// A placeholder that works out to TEXT errors rather than adding a silent 0
+// — the Phase A softness, tightened for entry fields and properties alike.
+$vain_sheet = $chr_roll_sheet(['gear' => [
+    ['name' => 'Nameless Charm', 'notes' => '', 'weapon' => true, 'harm_rating' => 0, 'harm' => 0,
+     'roll' => '1d4 + {entry["name"]}'],
+], 'playbook_moves' => [
+    ['name' => 'Vain Strike', 'effect' => '', 'has' => true, 'dice' => '2d6 + {look}'],
+]] + $chr_roll_values, ['curse']);
+$vain_entry = Roll::respond('nameless charm', $chr_roll_template, $vain_sheet, $url, $scripted([2]));
+check('a text-valued entry field errors instead of adding 0', $vain_entry['response_type'] === 'ephemeral'
+    && str_contains($vain_entry['text'], "didn't work out"));
+$vain_prop = Roll::respond('vain strike', $chr_roll_template, $vain_sheet, $url, $scripted([2, 2]));
+check('a text-valued property errors the same way', $vain_prop['response_type'] === 'ephemeral'
+    && str_contains($vain_prop['text'], "didn't work out"));
 
 // --- Wiring ------------------------------------------------------------------
 

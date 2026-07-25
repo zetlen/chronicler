@@ -30,6 +30,13 @@ namespace Chronicler\Slack\Bot;
  * sheet before a single die is thrown, and the refusal never names the
  * property — naming it would leak its existence.
  *
+ * The rule has exactly one carve-out (2026-07-25 Phase B): a reference named
+ * `entry` on a character-carried roll. The entry's values ride a list the
+ * viewer already sees — the visibility authority filtered the sheet BEFORE
+ * the collector ran, so a contribution from an invisible list cannot exist
+ * here — and the values arrive on the roll itself, not through the sheet
+ * lookup. Every other reference keeps the rule unchanged.
+ *
  * The RESULT posts in_channel: dice are social, and a roll nobody else sees is
  * worthless at a table. Menus and refusals stay ephemeral — a channel does not
  * need everyone's typos.
@@ -212,7 +219,16 @@ final class Roll
      * chronicler_sheets_roll_dice() expects, or ['hidden' => [property ids]]
      * when the roll reaches for something this viewer cannot see (see the
      * class docblock — this is the security rule), or ['error' => message]
-     * when a placeholder fails to evaluate at all.
+     * when a placeholder fails to evaluate, or evaluates to something dice
+     * cannot add — roll_dice() would quietly read either as 0, and a wrong
+     * total posted in_channel is the failure a dice bot exists to prevent.
+     *
+     * A character-carried roll brings its own 'entry' map (the collector's
+     * contribution shape), so its placeholders are fenced against the
+     * entry-augmented scope and entry["…"] resolves the entry's own fields;
+     * refs named `entry` skip the hidden-property check (the class docblock's
+     * carve-out). A system roll carries no entry, keeps the plain template,
+     * and `entry` stays an unknown name there.
      *
      * The reference list comes from the same fence template SAVE uses
      * (chronicler_sheets_formula_check), so "what does this expression touch"
@@ -225,14 +241,22 @@ final class Roll
             $visible[$property['id']] = $property['value'] ?? null;
         }
 
+        $entry = is_array($roll['entry'] ?? null) ? $roll['entry'] : null;
+        $scope = $entry === null
+            ? $template
+            : chronicler_sheets_formula_entry_scope($template, array_keys($entry));
+
         $placeholders = chronicler_sheets_dice_placeholders($roll['parsed']);
         $hidden = [];
         foreach ($placeholders as $expression) {
-            $checked = chronicler_sheets_formula_check($expression, $template);
+            $checked = chronicler_sheets_formula_check($expression, $scope);
             if (is_wp_error($checked)) {
                 return ['error' => $checked->get_error_message()];
             }
             foreach ($checked['refs'] as $ref) {
+                if ($entry !== null && $ref === 'entry') {
+                    continue;
+                }
                 if (!array_key_exists($ref, $visible)) {
                     $hidden[$ref] = true;
                 }
@@ -245,11 +269,17 @@ final class Roll
         // Every reference is visible, so the context's fallback-to-default for
         // withheld properties can no longer affect the result.
         $context = chronicler_sheets_formula_context($template, $visible);
+        if ($entry !== null) {
+            $context['entry'] = $entry;
+        }
         $values = [];
         foreach ($placeholders as $expression) {
             $result = chronicler_sheets_formula_evaluate($expression, $context);
             if (is_wp_error($result)) {
                 return ['error' => $result->get_error_message()];
+            }
+            if (!is_numeric($result)) {
+                return ['error' => '{' . $expression . '} adds up to something that isn\'t a number.'];
             }
             $values[$expression] = $result;
         }

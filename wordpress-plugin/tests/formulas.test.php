@@ -196,3 +196,55 @@ check('when: expression false', chronicler_sheets_when_holds($chr_when_gear, $ch
 check('when: missing entry values use field defaults', chronicler_sheets_when_holds($chr_when_gear, $chr_when_field, []) === false);
 check('when: absent when always shows', chronicler_sheets_when_holds($chr_when_gear, ['id' => 'name', 'label' => 'Name', 'type' => 'text'], []) === true);
 check('when: runtime failure fails soft to hidden', chronicler_sheets_when_holds($chr_when_gear, ['id' => 'x', 'label' => 'X', 'type' => 'text', 'when' => 'harm_rating % 0 == 0'], ['harm_rating' => 1]) === false);
+
+// --- The entry["…"] scope (2026-07-25 Phase B): a character-carried dice
+// expression reaches the entry that declared it through the `entry` namespace
+// — never merged into property scope, because the live MotW shape has both a
+// character `harm` track and a gear-entry harm number, and silent shadowing
+// mid-session is the danger the namespace exists to prevent. ---
+
+// The value map the collector attaches: referencable fields only, defaults
+// for what the entry doesn't store, toggles 0/1 like checklist options.
+check(
+    'entry values map the referencable fields, in field order',
+    chronicler_sheets_formula_entry_values($chr_when_gear, ['name' => 'Machete', 'is_weapon' => true, 'harm_rating' => 2, 'diary' => 'Dear diary…'])
+        === ['name' => 'Machete', 'is_weapon' => 1, 'harm_rating' => 2]
+);
+check(
+    'entry values: a toggle reads 0/1, and missing fields take their defaults',
+    chronicler_sheets_formula_entry_values($chr_when_gear, ['is_weapon' => false])
+        === ['name' => '', 'is_weapon' => 0, 'harm_rating' => 0]
+);
+
+// The fence, against a template augmented with the synthetic member.
+$chr_entry_base = ['properties' => [
+    'sharp' => ['id' => 'sharp', 'label' => 'Sharp', 'type' => 'number', 'min' => -1, 'max' => 3],
+    'harm' => ['id' => 'harm', 'label' => 'Harm', 'type' => 'track', 'length' => 7],
+]];
+$chr_entry_scope = chronicler_sheets_formula_entry_scope($chr_entry_base, ['name', 'is_weapon', 'harm']);
+$chr_entry_ok = chronicler_sheets_formula_check('entry["harm"] + sharp', $chr_entry_scope);
+check('the scope admits entry["…"] beside property refs', is_array($chr_entry_ok), is_wp_error($chr_entry_ok) ? $chr_entry_ok->get_error_message() : '');
+check('the scope reports entry among the refs', is_array($chr_entry_ok) && in_array('entry', $chr_entry_ok['refs'], true));
+check(
+    'the namespace shadows cleanly: harm["current"] is the track, entry["harm"] the entry',
+    is_array(chronicler_sheets_formula_check('harm["current"] + entry["harm"]', $chr_entry_scope))
+);
+$chr_entry_unknown = chronicler_sheets_formula_check('entry["nonesuch"]', $chr_entry_scope);
+check(
+    'an unknown entry field is a loud error naming the parts the entry has',
+    is_wp_error($chr_entry_unknown)
+        && strpos($chr_entry_unknown->get_error_message(), 'nonesuch') !== false
+        && strpos($chr_entry_unknown->get_error_message(), 'is_weapon') !== false
+);
+$chr_entry_bare = chronicler_sheets_formula_check('entry + 1', $chr_entry_scope);
+check(
+    'bare entry is refused, pointing at the bracket spelling',
+    is_wp_error($chr_entry_bare) && strpos($chr_entry_bare->get_error_message(), 'entry["') !== false
+);
+check(
+    'without the scope, entry stays an unknown name (system rolls, derived)',
+    is_wp_error(chronicler_sheets_formula_check('entry["harm"]', $chr_entry_base))
+);
+// The synthetic member's type is internal: no author can declare a property
+// of that type, so the namespace cannot be forged from a template.
+check('the synthetic entry type is not an authorable property type', !in_array(CHRONICLER_FORMULA_ENTRY_TYPE, CHRONICLER_SHEETS_TYPES, true));

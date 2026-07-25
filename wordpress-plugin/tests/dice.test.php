@@ -201,6 +201,12 @@ check('the section is the list property\'s label', $chr_cr !== [] && $chr_cr[0][
 check('the dice string carries through trimmed', $chr_cr !== [] && $chr_cr[0]['dice'] === '2d6 + {sharp}');
 check('the dice arrive pre-parsed like a system roll\'s', $chr_cr !== [] && is_array($chr_cr[0]['parsed']) && $chr_cr[0]['parsed']['terms'][0]['kind'] === 'dice');
 check('the detail is the first longtext field\'s FIRST LINE', $chr_cr !== [] && $chr_cr[0]['detail'] === 'Act under pressure with +Sharp');
+// Phase B: each contribution carries its entry's referencable fields, ready
+// to be the entry["…"] namespace when Roll::values() builds the context.
+check(
+    'the contribution carries its entry\'s referencable fields (toggle as 0/1)',
+    $chr_cr !== [] && $chr_cr[0]['entry'] === ['name' => "I've Read About This Sort of Thing", 'has' => 1]
+);
 
 // The gates, one by one.
 $chr_cr_untaken = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
@@ -240,6 +246,25 @@ $chr_cr_ungated = chronicler_sheets_character_rolls($chr_cr_sheet([[
     'value' => [['name' => 'Machete', 'dice' => '1d8']],
 ]]));
 check('a dice field without a when contributes whenever non-empty', count($chr_cr_ungated) === 1 && $chr_cr_ungated[0]['label'] === 'Machete');
+
+// The entry map in full: defaults fill what the entry doesn't store, and
+// longtext/dice fields stay out — notation and prose are not referencable.
+$chr_cr_entry_map = chronicler_sheets_character_rolls($chr_cr_sheet([[
+    'id' => 'gear', 'label' => 'Gear', 'type' => 'list',
+    'fields' => [
+        ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+        ['id' => 'weapon', 'label' => 'Weapon?', 'type' => 'toggle'],
+        ['id' => 'harm_rating', 'label' => 'Harm', 'type' => 'number', 'min' => 0, 'max' => 5],
+        ['id' => 'notes', 'label' => 'Notes', 'type' => 'longtext'],
+        ['id' => 'dice', 'label' => 'Damage', 'type' => 'dice'],
+    ],
+    'value' => [['name' => 'Machete', 'weapon' => true, 'dice' => '1d8 + {entry["harm_rating"]}']],
+]]));
+check(
+    'the entry map fills defaults and excludes longtext and dice fields',
+    count($chr_cr_entry_map) === 1
+        && $chr_cr_entry_map[0]['entry'] === ['name' => 'Machete', 'weapon' => 1, 'harm_rating' => 0]
+);
 
 // label_field wins over the first-text-field convention.
 $chr_cr_lf = chronicler_sheets_character_rolls($chr_cr_sheet([[

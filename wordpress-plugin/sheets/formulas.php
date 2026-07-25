@@ -40,6 +40,16 @@ const CHRONICLER_FORMULA_UNARY_OPS = ['-', '+', 'not', '!'];
 /** Property types a formula may reference, and how they appear in context. */
 const CHRONICLER_FORMULA_REF_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text'];
 
+/**
+ * The type of the synthetic `entry` member chronicler_sheets_formula_entry_scope()
+ * plants (2026-07-25 Phase B: a weapon's dice add the weapon's own harm).
+ * Internal by construction: CHRONICLER_SHEETS_TYPES never admits it, so no
+ * author can declare a property of this type, and the property id `entry`
+ * has been reserved at strict save since Phase A — the namespace cannot be
+ * forged or shadowed from a template.
+ */
+const CHRONICLER_FORMULA_ENTRY_TYPE = 'list entry';
+
 /** Whether the bundled expression engine is present (vendor/ built). */
 function chronicler_sheets_formula_available(): bool {
     return class_exists(ExpressionLanguage::class);
@@ -73,6 +83,10 @@ function chronicler_sheets_formula_subkeys(array $property): ?array {
             return isset($property['max']) ? ['current', 'max'] : ['current'];
         case 'checklist':
             return array_column($property['options'] ?? [], 'id');
+        case CHRONICLER_FORMULA_ENTRY_TYPE:
+            // The synthetic `entry` member: its parts are the referencable
+            // field ids of the list entry a character-carried roll rides.
+            return $property['fields'];
         default:
             return null; // scalar — referenced bare, no dotting
     }
@@ -87,6 +101,14 @@ function chronicler_sheets_formula_subkeys(array $property): ?array {
 function chronicler_sheets_formula_context(array $template, array $values): array {
     $context = [];
     foreach ($template['properties'] as $id => $property) {
+        if ($property['type'] === CHRONICLER_FORMULA_ENTRY_TYPE) {
+            // The synthetic `entry` member: the caller passes the value map
+            // ready-made (chronicler_sheets_formula_entry_values). An absent
+            // map still registers the name, which is all the fence's
+            // name-check needs.
+            $context[$id] = (array) ($values[$id] ?? []);
+            continue;
+        }
         if (!in_array($property['type'], CHRONICLER_FORMULA_REF_TYPES, true)) {
             continue;
         }
@@ -270,6 +292,38 @@ function chronicler_sheets_when_holds(array $property, array $field, array $entr
     $context = chronicler_sheets_formula_context(chronicler_sheets_formula_entry_template($property), $entry);
     $result = chronicler_sheets_formula_evaluate($expr, $context);
     return is_wp_error($result) ? false : (bool) $result;
+}
+
+/**
+ * The value map behind entry["…"] (2026-07-25 Phase B): one entry's
+ * referencable fields — the same set a field `when` may reference — with
+ * field defaults filling what the entry doesn't store, and toggles as 0/1,
+ * the checklist convention, so a toggle can ride arithmetic.
+ */
+function chronicler_sheets_formula_entry_values(array $property, array $entry): array {
+    $values = [];
+    foreach (chronicler_sheets_formula_entry_template($property)['properties'] as $id => $field) {
+        $value = $entry[$id] ?? chronicler_sheets_default_value($field);
+        $values[$id] = $field['type'] === 'toggle' ? (empty($value) ? 0 : 1) : $value;
+    }
+    return $values;
+}
+
+/**
+ * The template a character-carried dice expression is fenced against: the
+ * real properties plus a synthetic `entry` member whose parts are the given
+ * field ids. Entry fields are reachable ONLY through the namespace, never
+ * merged into property scope — the collision is real (the live MotW shape
+ * has a character `harm` track AND a gear-entry `harm` number), and silently
+ * shadowing one with the other mid-session is exactly the surprise the
+ * namespace exists to prevent.
+ */
+function chronicler_sheets_formula_entry_scope(array $template, array $field_ids): array {
+    $template['properties']['entry'] = [
+        'type' => CHRONICLER_FORMULA_ENTRY_TYPE,
+        'fields' => array_values($field_ids),
+    ];
+    return $template;
 }
 
 /**

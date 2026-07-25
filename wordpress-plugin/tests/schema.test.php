@@ -881,6 +881,15 @@ check(
         && strpos($chr_roll_ph_err->get_error_message(), 'col') !== false
 );
 
+// entry["…"] belongs to character-carried dice ONLY (2026-07-25 Phase B).
+// A system roll and a derived formula have no entry in scope, so the strict
+// fence keeps refusing the name like any other undeclared one — pinned here
+// so the namespace never quietly widens.
+check('a system roll placeholder reaching for entry["…"] is a save error', is_wp_error($chr_roll_ph('entry["harm"]')));
+check('a derived formula reaching for entry["…"] is a save error', is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([], [
+    ['id' => 'bonus', 'label' => 'Bonus', 'type' => 'number', 'derived' => 'entry["harm"] + 1'],
+]))));
+
 // "when" on a roll is GONE (2026-07-25: a move carries its own roll — the
 // case it served is a dice field on the character's own list entry now).
 // Strictly it is an unknown key like any other; a stored template that

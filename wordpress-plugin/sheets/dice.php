@@ -262,7 +262,12 @@ function chronicler_sheets_roll_dice(array $parsed, array $values, ?callable $rn
  * takes both kinds without branching:
  *
  *   ['id' => null, 'label' => …, 'section' => list label, 'detail' => …|null,
- *    'dice' => …, 'parsed' => …]
+ *    'dice' => …, 'parsed' => …, 'entry' => …]
+ *
+ * 'entry' is the one key system rolls lack (2026-07-25 Phase B): the entry's
+ * referencable field values, ready to be the entry["…"] namespace when
+ * Roll::values() builds the formula context — a weapon's dice add the
+ * weapon's OWN harm rating.
  *
  * The label comes from the list's `label_field` designation, else its first
  * text field; a list with neither contributes nothing (an unnamed roll is
@@ -321,6 +326,7 @@ function chronicler_sheets_character_rolls(array $sheet): array {
                 'detail' => $detail === '' ? null : $detail,
                 'dice' => $dice,
                 'parsed' => $parsed,
+                'entry' => chronicler_sheets_formula_entry_values($property, $entry),
             ];
         }
     }
