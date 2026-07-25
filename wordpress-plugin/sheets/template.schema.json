@@ -196,7 +196,7 @@
             "A whole number, optionally bounded by `min`/`max`.",
             "An on/off flag. Other fields can appear only when it's on, via `when`.",
             "Exactly one choice from `options`.",
-            "Dice notation with `{…}` placeholders, e.g. `\"2d6 + {sharp}\"` — the entry then offers that roll in /game roll, named by its text field. Pair with `when:` on a sibling toggle so only a taken move contributes. Validated leniently: a string that doesn't parse contributes no roll and is otherwise inert, never an error."
+            "Dice notation with `{…}` placeholders, e.g. `\"2d6 + {sharp}\"` — the entry then offers that roll in /game roll, named by its text field. Placeholders may also reach the entry's own fields as `entry[\"…\"]`: `\"1d8 + {entry[\"harm_rating\"]}\"` on a weapon adds that weapon's harm rating. Pair with `when:` on a sibling toggle so only a taken move contributes. Validated leniently: a string that doesn't parse contributes no roll and is otherwise inert, never an error — but a placeholder that can't be resolved fails loudly at roll time."
           ]
         },
         "when": { "type": "string", "minLength": 1, "description": "An expression (same language as `derived`) over this entry's other fields — the field shows only while it's true. A bare toggle id works: `when: is_weapon`." },
