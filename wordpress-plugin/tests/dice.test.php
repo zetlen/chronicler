@@ -170,3 +170,126 @@ check('a placeholder is keyed by its whole expression', $r['total'] === 5, json_
 // Ties keep the earlier die, so the report is deterministic.
 $r = chronicler_sheets_roll_dice(chronicler_sheets_parse_dice('3d6kh1'), [], $chr_dice_script([4, 4, 2]));
 check('a tie for highest keeps the first of the tied dice', array_column($r['terms'][0]['dice'], 'kept') === [true, false, false]);
+
+// --- the collector (2026-07-25: a move carries its own roll) -----------------
+// chronicler_sheets_character_rolls() turns a VIEWER-FILTERED sheet's list
+// entries into roll-shaped contributions. Pure: sheet in, contributions out.
+
+/** A serialized sheet property the way sheet_for_viewer() builds one. */
+$chr_cr_moves = function (array $entries, array $overrides = []) {
+    return array_merge([
+        'id' => 'moves', 'label' => 'Moves', 'type' => 'list',
+        'fields' => [
+            ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['id' => 'effect', 'label' => 'Description', 'type' => 'longtext'],
+            ['id' => 'has', 'label' => 'Has it', 'type' => 'toggle'],
+            ['id' => 'dice', 'label' => 'Roll', 'type' => 'dice', 'when' => 'has'],
+        ],
+    ], $overrides, ['value' => $entries]);
+};
+$chr_cr_sheet = function (array $properties) {
+    return ['title' => 'Alec', 'system' => 'MotW', 'properties' => $properties];
+};
+
+$chr_cr = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => "I've Read About This Sort of Thing", 'effect' => "Act under pressure with +Sharp\nwhen you've read about it.", 'has' => true, 'dice' => '2d6 + {sharp}'],
+])]));
+check('a named, taken, parseable entry contributes one roll', count($chr_cr) === 1, json_encode($chr_cr));
+check('the contribution has no id (character rolls match on label only)', $chr_cr !== [] && $chr_cr[0]['id'] === null);
+check('the label comes from the first text field', $chr_cr !== [] && $chr_cr[0]['label'] === "I've Read About This Sort of Thing");
+check('the section is the list property\'s label', $chr_cr !== [] && $chr_cr[0]['section'] === 'Moves');
+check('the dice string carries through trimmed', $chr_cr !== [] && $chr_cr[0]['dice'] === '2d6 + {sharp}');
+check('the dice arrive pre-parsed like a system roll\'s', $chr_cr !== [] && is_array($chr_cr[0]['parsed']) && $chr_cr[0]['parsed']['terms'][0]['kind'] === 'dice');
+check('the detail is the first longtext field\'s FIRST LINE', $chr_cr !== [] && $chr_cr[0]['detail'] === 'Act under pressure with +Sharp');
+
+// The gates, one by one.
+$chr_cr_untaken = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => 'Listed But Untaken', 'effect' => '', 'has' => false, 'dice' => '2d6 + {sharp}'],
+])]));
+check('an entry whose when is false contributes nothing', $chr_cr_untaken === []);
+
+$chr_cr_no_dice = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => 'A Move Without Dice', 'effect' => 'Narrative only.', 'has' => true, 'dice' => ''],
+])]));
+check('an entry with no dice value contributes nothing', $chr_cr_no_dice === []);
+
+$chr_cr_unnamed = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => '', 'effect' => 'x', 'has' => true, 'dice' => '2d6'],
+])]));
+check('an unnamed entry contributes nothing (an unnamed roll is unpickable)', $chr_cr_unnamed === []);
+
+$chr_cr_bad = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => 'Typo Move', 'effect' => '', 'has' => true, 'dice' => '2x6 garbage'],
+    ['name' => 'Fine Move', 'effect' => '', 'has' => true, 'dice' => '2d6 + {cool}'],
+])]));
+check('an unparseable dice string is inert, per entry', count($chr_cr_bad) === 1 && $chr_cr_bad[0]['label'] === 'Fine Move');
+
+$chr_cr_placeholder_row = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => '[quantum backpack object 1]', 'effect' => '', 'has' => false, 'dice' => ''],
+])]));
+check('a placeholder-only row contributes nothing', $chr_cr_placeholder_row === []);
+
+// A dice field with NO when contributes whenever non-empty — the gate is
+// explicit (decision 6), and forgetting it is legal, not fatal.
+$chr_cr_ungated = chronicler_sheets_character_rolls($chr_cr_sheet([[
+    'id' => 'gear', 'label' => 'Gear', 'type' => 'list',
+    'fields' => [
+        ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+        ['id' => 'dice', 'label' => 'Damage', 'type' => 'dice'],
+    ],
+    'value' => [['name' => 'Machete', 'dice' => '1d8']],
+]]));
+check('a dice field without a when contributes whenever non-empty', count($chr_cr_ungated) === 1 && $chr_cr_ungated[0]['label'] === 'Machete');
+
+// label_field wins over the first-text-field convention.
+$chr_cr_lf = chronicler_sheets_character_rolls($chr_cr_sheet([[
+    'id' => 'gear', 'label' => 'Gear', 'type' => 'list', 'label_field' => 'nickname',
+    'fields' => [
+        ['id' => 'maker', 'label' => 'Maker', 'type' => 'text'],
+        ['id' => 'nickname', 'label' => 'Nickname', 'type' => 'text'],
+        ['id' => 'dice', 'label' => 'Damage', 'type' => 'dice'],
+    ],
+    'value' => [['maker' => 'Ithaca', 'nickname' => 'Old Reliable', 'dice' => '2d8']],
+]]));
+check('label_field beats the first text field', count($chr_cr_lf) === 1 && $chr_cr_lf[0]['label'] === 'Old Reliable');
+
+// Two contributing lists: sheet property order, entries in list order.
+$chr_cr_two = chronicler_sheets_character_rolls($chr_cr_sheet([
+    $chr_cr_moves([
+        ['name' => 'First Move', 'effect' => '', 'has' => true, 'dice' => '2d6'],
+        ['name' => 'Second Move', 'effect' => '', 'has' => true, 'dice' => '2d6'],
+    ]),
+    [
+        'id' => 'gear', 'label' => 'Gear', 'type' => 'list',
+        'fields' => [
+            ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['id' => 'dice', 'label' => 'Damage', 'type' => 'dice'],
+        ],
+        'value' => [['name' => 'Machete', 'dice' => '1d8']],
+    ],
+]));
+check(
+    'two lists contribute in sheet order, entries in list order',
+    array_column($chr_cr_two, 'label') === ['First Move', 'Second Move', 'Machete']
+        && array_column($chr_cr_two, 'section') === ['Moves', 'Moves', 'Gear']
+);
+
+// The regression case: no dice field anywhere, nothing contributed.
+$chr_cr_none = chronicler_sheets_character_rolls($chr_cr_sheet([
+    ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'value' => 2],
+    ['id' => 'gear', 'label' => 'Gear', 'type' => 'list',
+     'fields' => [['id' => 'name', 'label' => 'Name', 'type' => 'text']],
+     'value' => [['name' => 'Rope']]],
+]));
+check('a sheet with no dice field contributes nothing', $chr_cr_none === []);
+
+// A long first line truncates to one legible menu line.
+$chr_cr_long = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([
+    ['name' => 'Wordy', 'effect' => str_repeat('very ', 40) . 'long', 'has' => true, 'dice' => '2d6'],
+])]));
+check(
+    'a long detail truncates with an ellipsis',
+    $chr_cr_long !== []
+        && mb_strlen($chr_cr_long[0]['detail']) <= 120
+        && mb_substr($chr_cr_long[0]['detail'], -1) === '…'
+);

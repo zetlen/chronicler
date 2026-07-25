@@ -511,6 +511,11 @@ function chronicler_sheets_render_list_table(array $property, array $entries): s
                 $cell = esc_html(chronicler_sheets_display_value($field, $value));
             } elseif ($field['type'] === 'longtext') {
                 $cell = nl2br(esc_html((string) $value));
+            } elseif ($field['type'] === 'dice') {
+                // Notation as-is, honestly: "2d6 + {sharp}" is what the entry
+                // rolls. Unparseable strings render the same way — inert
+                // means inert; the sheet never editorializes.
+                $cell = trim((string) $value) === '' ? '' : '<code>' . esc_html((string) $value) . '</code>';
             } else {
                 $cell = esc_html((string) $value);
             }

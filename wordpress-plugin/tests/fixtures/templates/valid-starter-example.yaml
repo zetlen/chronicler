@@ -75,8 +75,8 @@ properties:
       - { id: mundane, label: The Mundane }
 
   # Any subset of options, each checked on or off. A formula can ask about one
-  # option — moves["nine_lives"] is 1 when checked, 0 when not — which is how
-  # a move gives a character a roll nobody else has (see "when" below).
+  # option — moves["nine_lives"] is 1 when checked, 0 when not — so a derived
+  # value can depend on whether a move is taken.
   - id: moves
     label: Moves
     type: checklist
@@ -113,6 +113,15 @@ properties:
         type: number
         min: 0
         max: 5
+        when: is_weapon
+      # A dice field makes an entry a roll the character carries: write
+      # "1d8" or "2d6 + {tough}" on a weapon and /game roll offers it,
+      # named after the entry. Gate it on the toggle so only real weapons
+      # contribute. A string that doesn't parse offers no roll and breaks
+      # nothing — the sheet editor flags it.
+      - id: roll
+        label: Roll
+        type: dice
         when: is_weapon
 
   # always_show keeps an empty property visible as a prompt instead of
@@ -153,21 +162,15 @@ rolls:
   # anything between braces is a formula in the same language as `derived`,
   # evaluated against this character and added as a number. "section" is
   # optional grouping for the listing; rolls without one list last.
+  # These are the rolls EVERY character of this system has. A roll only one
+  # character has — a playbook move that rolls +Sharp instead of +Cool, a
+  # weapon's damage — doesn't belong here: the character carries it, as dice
+  # written on their own list entry (see gear's "roll" field above).
   - id: act_under_pressure
     label: Act Under Pressure
     section: Basic Moves
     dice: "2d6 + {cool}"
     detail: "when you do something under fire"
-  # "when" gates a roll on the character: false and the roll is neither listed
-  # nor rollable, so a move can hand one hunter an option nobody else has.
-  # Both entries stay on the menu — the move is situational ("act under
-  # pressure to do something you've read about"), so the player picks.
-  - id: act_under_pressure_read_about
-    label: Act Under Pressure (I've Read About This Sort of Thing)
-    section: Basic Moves
-    when: 'moves["read_about_this"]'
-    dice: "2d6 + {sharp}"
-    detail: "when acting under pressure on something you've read about"
   - id: kick_some_ass
     label: Kick Some Ass
     section: Basic Moves

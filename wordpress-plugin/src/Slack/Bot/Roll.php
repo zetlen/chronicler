@@ -3,17 +3,19 @@
 namespace Chronicler\Slack\Bot;
 
 /**
- * `/game roll [name]` — roll one of the rolls the game system declares, with
- * this character's own values substituted (design 2026-07-25 §4).
+ * `/game roll [name]` — roll one of the rolls this character has, with their
+ * own values substituted. A roll belongs to whatever declares it (design
+ * 2026-07-25, "a move carries its own roll"): the system declares the rolls
+ * every character has in its `rolls:` table, and the character declares its
+ * own by writing dice on a list entry (a playbook move, a weapon). respond()
+ * serves the union — system rolls first, then each contributing list's
+ * section, via chronicler_sheets_character_rolls().
  *
  * Resolution follows the same discipline as `/game my`: roll id → roll label →
  * unique prefix, and an ambiguous word comes back as a disambiguation rather
- * than a pick. With no argument it lists what the system offers, grouped by
- * the optional `section`, declaration order, sectionless rolls last.
- *
- * A roll may carry a `when` (§4b) — the move that changes a move. available()
- * runs that gate against the viewer's own sheet FIRST, so every branch below,
- * resolution included, only ever sees rolls this character actually has.
+ * than a pick — including a sheet entry named after a system roll, which is
+ * ambiguous by decision, never an override. With no argument it lists the
+ * union, grouped by section, declaration order, sectionless rolls last.
  *
  * respond() is the whole command minus the viewer resolution — template and
  * viewer-filtered sheet in, Slack body out, randomizer injected — so every
@@ -77,20 +79,23 @@ final class Roll
         ?callable $rng = null
     ): array {
         $declared = is_array($template['rolls'] ?? null) ? $template['rolls'] : [];
-        if ($declared === []) {
-            return self::plain(
-                '*' . Commands::escape((string) ($template['system'] ?? 'This system'))
-                . '* declares no rolls yet — a game system lists them in its `rolls:` table, '
-                . 'and then they show up here.'
-            );
+        // The union everything below sees: the system's rolls (id-keyed,
+        // every character has all of them) first, then the sheet's own
+        // contributions (2026-07-25: a move carries its own roll) — list
+        // entries with dice written on them, id-less by design, keyed
+        // "sheet:N" so the union can't collide with the id namespace.
+        // Resolution runs over the union, so a sheet roll is rollable
+        // exactly like a declared one.
+        $rolls = $declared;
+        foreach (\chronicler_sheets_character_rolls($sheet) as $i => $contributed) {
+            $rolls['sheet:' . $i] = $contributed;
         }
-        // Everything below sees only the rolls this character actually has:
-        // resolution included, so a gated-off roll is not rollable by name.
-        $rolls = self::available($declared, $template, $sheet);
         if ($rolls === []) {
             return self::plain(
-                'None of *' . Commands::escape((string) ($template['system'] ?? 'this system'))
-                . "*'s rolls are available to your character right now."
+                '*' . Commands::escape((string) ($template['system'] ?? 'This system'))
+                . '* declares no rolls yet, and your sheet carries none — a game system lists '
+                . 'rolls in its `rolls:` table, and a move or gear entry with dice written on '
+                . 'it shows up here too.'
             );
         }
         if (trim($query) === '') {
@@ -135,58 +140,22 @@ final class Roll
     }
 
     /**
-     * The rolls this character HAS: every roll whose optional `when` holds,
-     * evaluated against the VIEWER-FILTERED sheet (design §4b). A roll whose
-     * `when` is false does not exist for them — absent from the listing, and
-     * absent from resolution, so naming it exactly reads as an unknown roll.
+     * Match a query against the merged roll set: id → label → unique prefix,
+     * first STAGE wins. Ids are written with underscores but spoken with
+     * spaces, so "act under pressure" finds `act_under_pressure` either way.
      *
-     * Failing closed is the whole posture here, and it is DELIBERATELY unlike
-     * values()' loud refusal below. A `when` that reaches for a property the
-     * viewer cannot see is simply unavailable, silently: the roll's existence
-     * is itself the secret ("the GM knows you're cursed"), whereas a roll the
-     * player can see and named deserves to be told why it won't run. Anything
-     * that can't be evaluated — an expression the fence rejects, a runtime
-     * failure — lands the same way: no roll.
-     */
-    public static function available(array $rolls, array $template, array $sheet): array
-    {
-        $visible = [];
-        foreach (($sheet['properties'] ?? []) as $property) {
-            $visible[$property['id']] = $property['value'] ?? null;
-        }
-        // Defaults fill in for properties the viewer can't see, so every
-        // reference is checked against $visible BEFORE the expression runs.
-        $context = chronicler_sheets_formula_context($template, $visible);
-
-        $available = [];
-        foreach ($rolls as $key => $roll) {
-            $when = $roll['when'] ?? null;
-            if (!is_string($when) || trim($when) === '') {
-                $available[$key] = $roll; // no gate — everyone has it
-                continue;
-            }
-            $checked = chronicler_sheets_formula_check($when, $template);
-            if (is_wp_error($checked)) {
-                continue;
-            }
-            foreach ($checked['refs'] as $ref) {
-                if (!array_key_exists($ref, $visible)) {
-                    continue 2;
-                }
-            }
-            $result = chronicler_sheets_formula_evaluate($when, $context);
-            if (is_wp_error($result) || !$result) {
-                continue;
-            }
-            $available[$key] = $roll;
-        }
-        return $available;
-    }
-
-    /**
-     * Match a query against the roll table: id → label → unique prefix, first
-     * hit wins. Ids are written with underscores but spoken with spaces, so
-     * "act under pressure" finds `act_under_pressure` either way.
+     * The merge changed the exact stage's shape (2026-07-25). It used to be
+     * two stages, id then label, first hit wins — but an id is its label
+     * spoken with underscores for virtually every declared roll, so "id
+     * first" would let the system roll silently swallow a same-named sheet
+     * entry, the exact override the design rejects. Instead ONE exact stage
+     * collects every roll the word names exactly — by id (spoken with spaces
+     * or not) or by label — keyed by the caller's array key, so an id hit
+     * and a label hit on the SAME roll count once. One candidate wins
+     * outright; several are ambiguous. Character rolls carry no id
+     * (id === null), and normalized labels keep their spaces, so the
+     * underscore spelling (`act_under_pressure`) remains an unambiguous
+     * escape hatch into the id namespace.
      *
      * Returns ['kind' => 'roll', 'roll' => …], ['kind' => 'ambiguous',
      * 'candidates' => […labels…]], or ['kind' => 'none'].
@@ -198,21 +167,30 @@ final class Roll
         if ($q === '') {
             return ['kind' => 'none'];
         }
-        foreach ($rolls as $roll) {
-            if ((string) $roll['id'] === $qid) {
-                return ['kind' => 'roll', 'roll' => $roll];
+        $named = [];
+        foreach ($rolls as $key => $roll) {
+            if (($roll['id'] !== null && (string) $roll['id'] === $qid)
+                || self::normalize((string) $roll['label']) === $q) {
+                $named[$key] = $roll;
             }
         }
-        foreach ($rolls as $roll) {
-            if (self::normalize((string) $roll['label']) === $q) {
-                return ['kind' => 'roll', 'roll' => $roll];
-            }
+        if (count($named) === 1) {
+            return ['kind' => 'roll', 'roll' => reset($named)];
         }
+        if (count($named) > 1) {
+            return ['kind' => 'ambiguous', 'candidates' => array_values(array_map(
+                static fn(array $r): string => (string) $r['label'],
+                $named
+            ))];
+        }
+        // Candidates are keyed by the caller's own array key — a character
+        // roll has no id to key by — so a word that is a prefix of both a
+        // roll's id AND its label still counts once.
         $candidates = [];
-        foreach ($rolls as $roll) {
-            $id = (string) $roll['id'];
-            if (self::startsWith($id, $qid) || self::startsWith(self::normalize((string) $roll['label']), $q)) {
-                $candidates[$id] = $roll;
+        foreach ($rolls as $key => $roll) {
+            $id = $roll['id'] === null ? '' : (string) $roll['id'];
+            if (($id !== '' && self::startsWith($id, $qid)) || self::startsWith(self::normalize((string) $roll['label']), $q)) {
+                $candidates[$key] = $roll;
             }
         }
         if (count($candidates) === 1) {

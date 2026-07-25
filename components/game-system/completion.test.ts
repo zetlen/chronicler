@@ -99,11 +99,12 @@ describe("gameSystemCompletion — type values", () => {
     expect(info.textContent).toMatch(/track|boxes/i);
   });
 
-  it("offers only the five list-field types inside fields", () => {
+  it("offers only the six list-field types inside fields", () => {
     const result = completeAt(after("type: te"));
     const labels = result!.options.map((o) => o.label);
-    expect(labels).toHaveLength(5);
+    expect(labels).toHaveLength(6);
     expect(labels).toContain("toggle");
+    expect(labels).toContain("dice");
     expect(labels).not.toContain("track");
   });
 });

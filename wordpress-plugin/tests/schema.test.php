@@ -881,63 +881,38 @@ check(
         && strpos($chr_roll_ph_err->get_error_message(), 'col') !== false
 );
 
-// "when" (2026-07-25 §4b): a roll a character only sometimes has — the PbtA
-// move that changes another move. Checked at save through the same fence as a
-// placeholder, with one deliberate difference: a `when` is a BOOLEAN test, so
-// it may reference ANY formula-referencable type, not just the numerics a
-// placeholder is restricted to.
-$chr_roll_when = function ($when, array $extra_properties = []) use ($chr_roll_tpl) {
-    return chronicler_sheets_parse_template($chr_roll_tpl(
-        [['id' => 'aim', 'label' => 'Aim', 'when' => $when, 'dice' => '2d6 + {cool}']],
-        $extra_properties
-    ));
-};
-$chr_when_ok = $chr_roll_when('moves["the_big_entrance"]');
-check('a roll may declare a when', is_array($chr_when_ok), $chr_why($chr_when_ok));
+// "when" on a roll is GONE (2026-07-25: a move carries its own roll — the
+// case it served is a dice field on the character's own list entry now).
+// Strictly it is an unknown key like any other; a stored template that
+// declared one still reads, the key dropped rather than the roll.
 check(
-    'the when is normalized onto the roll',
-    is_array($chr_when_ok) && $chr_when_ok['rolls']['aim']['when'] === 'moves["the_big_entrance"]'
+    'a roll carrying when is a save error (the key is gone)',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl(
+        [['id' => 'aim', 'label' => 'Aim', 'when' => 'moves["the_big_entrance"]', 'dice' => '2d6 + {cool}']]
+    )))
 );
 check(
-    'a roll with no when carries when => null',
-    is_array($chr_rolls)
-        && array_key_exists('when', $chr_rolls['rolls']['act_under_pressure'])
-        && $chr_rolls['rolls']['act_under_pressure']['when'] === null
+    'a roll parses without a when key in its normalized shape',
+    is_array($chr_rolls) && !array_key_exists('when', $chr_rolls['rolls']['act_under_pressure'])
 );
-$chr_when_select = $chr_roll_when('kind == "a" and not moves["crime_pays"]', [
-    ['id' => 'kind', 'label' => 'Kind', 'type' => 'select', 'options' => [['id' => 'a', 'label' => 'A']]],
-]);
-check('a when may test a select and a checklist — it is not adding numbers', is_array($chr_when_select), $chr_why($chr_when_select));
-check('a when may compare numbers', is_array($chr_roll_when('cool > 1')), $chr_why($chr_roll_when('cool > 1')));
-check('a when naming an undeclared property is a save error', is_wp_error($chr_roll_when('braces')));
-$chr_when_err = $chr_roll_when('braces');
-check(
-    'the when error names the roll and quotes the expression',
-    is_wp_error($chr_when_err)
-        && strpos($chr_when_err->get_error_message(), 'aim') !== false
-        && strpos($chr_when_err->get_error_message(), 'braces') !== false
-);
-check('a when with a syntax error is a save error', is_wp_error($chr_roll_when('cool >')));
-check('a bare checklist reference in a when is a save error', is_wp_error($chr_roll_when('moves')));
-check('a when naming a list property is a save error', is_wp_error($chr_roll_when('gear', [
-    ['id' => 'gear', 'label' => 'Gear', 'type' => 'list', 'fields' => [['id' => 'name', 'label' => 'Name', 'type' => 'text']]],
-])));
-check('an empty when is a save error', is_wp_error($chr_roll_when('')));
-check('a non-string when is a save error', is_wp_error($chr_roll_when(true)));
 
 // A stored template must keep RENDERING whatever a later rule says about it:
-// a broken roll drops out, the rest of the sheet is untouched.
+// a broken roll drops out, the rest of the sheet is untouched — and a legacy
+// `when` is tolerated as an unknown key, keeping the roll.
 $chr_roll_lenient = chronicler_sheets_parse_template($chr_roll_tpl([
     ['id' => 'aim', 'label' => 'Aim', 'dice' => '2x6'],
-    // A when nobody can evaluate is the same kind of broken as dice nobody can
-    // roll, and it fails CLOSED on the read path: the roll drops out.
     ['id' => 'duck', 'label' => 'Duck', 'when' => 'nonesuch', 'dice' => '2d6'],
     ['id' => 'shoot', 'label' => 'Shoot', 'dice' => '2d6 + {cool}'],
     ['id' => 'shoot', 'label' => 'Shoot Twice', 'dice' => '2d6'],
 ]), true);
 check('a lenient read survives an unrollable roll', is_array($chr_roll_lenient), $chr_why($chr_roll_lenient));
-check('the lenient read keeps the rolls that do parse', is_array($chr_roll_lenient) && array_keys($chr_roll_lenient['rolls']) === ['shoot']);
-check('the lenient read drops a roll whose when cannot be checked', is_array($chr_roll_lenient) && !isset($chr_roll_lenient['rolls']['duck']));
+check('the lenient read keeps the rolls that do parse', is_array($chr_roll_lenient) && array_keys($chr_roll_lenient['rolls']) === ['duck', 'shoot']);
+check(
+    'a stored roll with a legacy when keeps rolling, the key dropped',
+    is_array($chr_roll_lenient)
+        && isset($chr_roll_lenient['rolls']['duck'])
+        && !array_key_exists('when', $chr_roll_lenient['rolls']['duck'])
+);
 check('the lenient read keeps the first of two rolls sharing an id', is_array($chr_roll_lenient) && $chr_roll_lenient['rolls']['shoot']['label'] === 'Shoot');
 check('an empty rolls list parses to an empty table', ($x = chronicler_sheets_parse_template($chr_roll_tpl([]))) && is_array($x) && $x['rolls'] === []);
 $chr_rolls_scalar = json_encode(array_merge(json_decode($motw, true), ['rolls' => 'nope']));
@@ -946,3 +921,97 @@ check(
     'a lenient read of a non-list rolls key drops it',
     ($x = chronicler_sheets_parse_template($chr_rolls_scalar, true)) && is_array($x) && $x['rolls'] === []
 );
+
+// --- dice list fields (2026-07-25: a move carries its own roll) --------------
+// A list entry may carry dice notation in a `dice`-typed field. The canonical
+// shape gates it on a sibling toggle so only a taken move contributes.
+$chr_dice_list = function (array $moves_extra = [], array $prop_extra = []) {
+    return json_encode([
+        'system' => 'MotW', 'version' => 1,
+        'properties' => [
+            ['id' => 'sharp', 'label' => 'Sharp', 'type' => 'number', 'min' => -1, 'max' => 3],
+            array_merge([
+                'id' => 'moves', 'label' => 'Moves', 'type' => 'list',
+                'fields' => array_merge([
+                    ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+                    ['id' => 'effect', 'label' => 'Description', 'type' => 'longtext'],
+                    ['id' => 'has', 'label' => 'Has it', 'type' => 'toggle'],
+                    ['id' => 'dice', 'label' => 'Roll', 'type' => 'dice', 'when' => 'has'],
+                ], $moves_extra),
+            ], $prop_extra),
+        ],
+    ]);
+};
+$chr_dice_parsed = chronicler_sheets_parse_template($chr_dice_list());
+check('a list with a dice field parses', is_array($chr_dice_parsed), $chr_why($chr_dice_parsed));
+check(
+    'the dice field round-trips with its when',
+    is_array($chr_dice_parsed)
+        && $chr_dice_parsed['properties']['moves']['fields'][3]['type'] === 'dice'
+        && $chr_dice_parsed['properties']['moves']['fields'][3]['when'] === 'has'
+);
+
+// label_field: which field names an entry in roll menus. Explicit beats the
+// first-text-field convention, and a wrong designation is a save error rather
+// than a silently wrong label.
+$chr_lf_ok = chronicler_sheets_parse_template($chr_dice_list([], ['label_field' => 'name']));
+check('label_field naming a declared text field parses', is_array($chr_lf_ok), $chr_why($chr_lf_ok));
+check(
+    'label_field carries through',
+    is_array($chr_lf_ok) && ($chr_lf_ok['properties']['moves']['label_field'] ?? null) === 'name'
+);
+check(
+    'label_field naming an undeclared field is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_dice_list([], ['label_field' => 'ghost'])))
+);
+check(
+    'label_field naming a non-text field is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_dice_list([], ['label_field' => 'has'])))
+);
+$chr_lf_scalar = json_decode($motw, true);
+$chr_lf_scalar['properties'][0]['label_field'] = 'name';
+check(
+    'label_field on a non-list property is a save error',
+    is_wp_error(chronicler_sheets_parse_template(json_encode($chr_lf_scalar)))
+);
+
+// A dice VALUE is player data and writes leniently: apply_op stores it as
+// trimmed text, parseable or not. The read path (the collector) is where an
+// unparseable string becomes inert — never a lost save (§5 correction).
+$chr_dice_prop = is_array($chr_dice_parsed) ? $chr_dice_parsed['properties']['moves'] : null;
+$chr_dice_written = $chr_dice_prop === null ? null : chronicler_sheets_apply_op($chr_dice_prop, [], 'set', [
+    ['name' => 'Read About This', 'has' => true, 'dice' => ' 2d6 + {sharp} '],
+    ['name' => 'Typo Move', 'has' => true, 'dice' => '2x6 nonsense'],
+]);
+check(
+    'a parseable dice value writes as trimmed text',
+    is_array($chr_dice_written) && $chr_dice_written[0]['dice'] === '2d6 + {sharp}'
+);
+check(
+    'an unparseable dice value still writes (lenient — inertness is read-side)',
+    is_array($chr_dice_written) && $chr_dice_written[1]['dice'] === '2x6 nonsense'
+);
+
+// `entry` is reserved as a property id (Phase B's entry["…"] namespace).
+// Strict save refuses; a hypothetical stored template keeps rendering.
+$chr_entry_id = json_decode($motw, true);
+$chr_entry_id['properties'][] = ['id' => 'entry', 'label' => 'Entry', 'type' => 'number'];
+check(
+    'a property id of "entry" is a save error (reserved)',
+    is_wp_error(chronicler_sheets_parse_template(json_encode($chr_entry_id)))
+);
+$chr_entry_msg = chronicler_sheets_parse_template(json_encode($chr_entry_id));
+check(
+    'the reservation error says the word is reserved',
+    is_wp_error($chr_entry_msg) && stripos($chr_entry_msg->get_error_message(), 'reserved') !== false
+);
+check(
+    'a stored template with an entry property still parses leniently',
+    is_array(chronicler_sheets_parse_template(json_encode($chr_entry_id), true))
+);
+// List FIELD ids stay free — entry scoping never nests, so a field named
+// entry shadows nothing.
+$chr_entry_field = chronicler_sheets_parse_template($chr_dice_list([
+    ['id' => 'entry', 'label' => 'Entry note', 'type' => 'text'],
+]));
+check('a list FIELD named entry is fine', is_array($chr_entry_field), $chr_why($chr_entry_field));

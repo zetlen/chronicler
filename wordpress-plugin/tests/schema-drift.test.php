@@ -117,18 +117,19 @@ check(
 // --- Drift check #4: list-field formula entry vocabulary (single-expression-conditions) --
 // CHRONICLER_FORMULA_ENTRY_REF_TYPES (formulas.php) is the set of list-field
 // types a field-scoped `when` expression may reference. Semantically it's
-// "every CHRONICLER_SHEETS_LIST_FIELD_TYPES entry except longtext" (longtext
-// has no meaningful expression value), and CHRONICLER_SHEETS_LIST_FIELD_TYPES
-// is already pinned to the schema's listField.type enum above, so this keeps
-// the entry-ref list transitively anchored to the schema too. The two
-// constants list their elements in a different order, so this compares as a
-// set rather than as ordered arrays (unlike the other checks in this file).
+// "every CHRONICLER_SHEETS_LIST_FIELD_TYPES entry except longtext and dice"
+// (longtext has no meaningful expression value; dice is notation, not a
+// referencable scalar), and CHRONICLER_SHEETS_LIST_FIELD_TYPES is already
+// pinned to the schema's listField.type enum above, so this keeps the
+// entry-ref list transitively anchored to the schema too. The two constants
+// list their elements in a different order, so this compares as a set rather
+// than as ordered arrays (unlike the other checks in this file).
 $chr_entry_ref_set = CHRONICLER_FORMULA_ENTRY_REF_TYPES;
 sort($chr_entry_ref_set);
-$chr_expected_entry_ref_set = array_values(array_diff(CHRONICLER_SHEETS_LIST_FIELD_TYPES, ['longtext']));
+$chr_expected_entry_ref_set = array_values(array_diff(CHRONICLER_SHEETS_LIST_FIELD_TYPES, ['longtext', 'dice']));
 sort($chr_expected_entry_ref_set);
 check(
-    'CHRONICLER_FORMULA_ENTRY_REF_TYPES matches CHRONICLER_SHEETS_LIST_FIELD_TYPES minus longtext (as a set)',
+    'CHRONICLER_FORMULA_ENTRY_REF_TYPES matches CHRONICLER_SHEETS_LIST_FIELD_TYPES minus longtext and dice (as a set)',
     $chr_entry_ref_set === $chr_expected_entry_ref_set
 );
 

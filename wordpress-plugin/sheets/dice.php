@@ -245,6 +245,112 @@ function chronicler_sheets_roll_dice(array $parsed, array $values, ?callable $rn
 }
 
 /**
+ * The rolls a character's own sheet contributes (2026-07-25: a move carries
+ * its own roll): for every list property carrying a dice-typed field, each
+ * entry that (a) has a label, (b) passes the dice field's `when`, (c) holds a
+ * non-empty dice string that parses, and (d) survives placeholder-row
+ * filtering, contributes one roll. Pure: sheet in, contributions out.
+ *
+ * Takes the VIEWER-FILTERED sheet (chronicler_sheets_sheet_for_viewer()
+ * shape — each property its full template definition plus 'value'), because
+ * each property already carries the field definitions needed here, and taking
+ * the sheet keeps the audience filtering upstream and unforgeable.
+ *
+ * Each contribution matches chronicler_sheets_parse_roll()'s shape minus the
+ * id — 'id' is explicitly null; character rolls have no stable id and match
+ * on label only — so every downstream consumer (values, reply, listing)
+ * takes both kinds without branching:
+ *
+ *   ['id' => null, 'label' => …, 'section' => list label, 'detail' => …|null,
+ *    'dice' => …, 'parsed' => …]
+ *
+ * The label comes from the list's `label_field` designation, else its first
+ * text field; a list with neither contributes nothing (an unnamed roll is
+ * unpickable). The detail is the first longtext field's first line. An
+ * unparseable dice string is INERT, per entry: it contributes no roll and
+ * costs nothing around it — the strict/lenient split puts dice-value errors
+ * on the sheet editor's row flag (admin.php), never on a read surface.
+ */
+function chronicler_sheets_character_rolls(array $sheet): array {
+    $rolls = [];
+    foreach (($sheet['properties'] ?? []) as $property) {
+        if (($property['type'] ?? null) !== 'list' || !is_array($property['fields'] ?? null)) {
+            continue;
+        }
+        $dice_field = null;
+        $label_field = null;
+        $detail_field = null;
+        foreach ($property['fields'] as $field) {
+            $dice_field ??= $field['type'] === 'dice' ? $field : null;
+            $label_field ??= $field['type'] === 'text' ? $field : null;
+            $detail_field ??= $field['type'] === 'longtext' ? $field : null;
+        }
+        if (isset($property['label_field'])) {
+            foreach ($property['fields'] as $field) {
+                if ($field['id'] === $property['label_field']) {
+                    $label_field = $field;
+                    break;
+                }
+            }
+        }
+        if ($dice_field === null || $label_field === null) {
+            continue;
+        }
+        foreach (chronicler_sheets_filter_placeholder_entries($property, (array) ($property['value'] ?? [])) as $entry) {
+            $label = trim((string) ($entry[$label_field['id']] ?? ''));
+            if (chronicler_sheets_is_placeholder_text($label)) {
+                continue;
+            }
+            if (!chronicler_sheets_when_holds($property, $dice_field, $entry)) {
+                continue;
+            }
+            $dice = trim((string) ($entry[$dice_field['id']] ?? ''));
+            if ($dice === '') {
+                continue;
+            }
+            $parsed = chronicler_sheets_parse_dice($dice);
+            if (is_wp_error($parsed)) {
+                continue;
+            }
+            $detail = $detail_field === null ? ''
+                : chronicler_sheets_dice_detail_line((string) ($entry[$detail_field['id']] ?? ''));
+            $rolls[] = [
+                'id' => null,
+                'label' => $label,
+                'section' => (string) ($property['label'] ?? ''),
+                'detail' => $detail === '' ? null : $detail,
+                'dice' => $dice,
+                'parsed' => $parsed,
+            ];
+        }
+    }
+    return $rolls;
+}
+
+/**
+ * A menu-worthy one-liner from a longtext value: the first non-empty line,
+ * truncated to 120 characters with an ellipsis. Multibyte-safe where the
+ * host has mbstring, byte-safe elsewhere (same guard as render.php).
+ */
+function chronicler_sheets_dice_detail_line(string $text): string {
+    $line = '';
+    foreach (preg_split('/\R/u', trim($text)) ?: [] as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate !== '') {
+            $line = $candidate;
+            break;
+        }
+    }
+    if ($line === '') {
+        return '';
+    }
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($line) <= 120 ? $line : rtrim(mb_substr($line, 0, 119)) . '…';
+    }
+    return strlen($line) <= 120 ? $line : rtrim(substr($line, 0, 119)) . '…';
+}
+
+/**
  * The indexes of the dice a kh/kl term keeps, ascending. No keep clause keeps
  * everything. Ties go to the earlier die, so the same faces always produce the
  * same report.

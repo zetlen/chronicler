@@ -72,7 +72,7 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Stable machine id: lowercase, starts with a letter, letters/digits/underscore only. Referenced by layout and formulas."
+          "description": "Stable machine id: lowercase, starts with a letter, letters/digits/underscore only. Referenced by layout and formulas. The word \"entry\" is reserved — formulas use entry[\"…\"] to reach a list entry's own fields."
         },
         "label": {
           "type": "string",
@@ -140,6 +140,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Singular noun for one list entry (e.g. \"Item\")."
+        },
+        "label_field": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Which field names an entry of this list in roll menus (/game roll). Must be a text field. Optional: defaults to the list's first text field."
         }
       },
       "allOf": [
@@ -183,14 +188,15 @@
         "label": { "type": "string", "minLength": 1, "description": "Human-readable field name." },
         "type": {
           "type": "string",
-          "enum": ["text", "longtext", "number", "toggle", "select"],
+          "enum": ["text", "longtext", "number", "toggle", "select", "dice"],
           "description": "Value kind for this list field.",
           "markdownEnumDescriptions": [
             "A short single-line text field.",
             "A multi-line text field (compact textarea inside an entry).",
             "A whole number, optionally bounded by `min`/`max`.",
             "An on/off flag. Other fields can appear only when it's on, via `when`.",
-            "Exactly one choice from `options`."
+            "Exactly one choice from `options`.",
+            "Dice notation with `{…}` placeholders, e.g. `\"2d6 + {sharp}\"` — the entry then offers that roll in /game roll, named by its text field. Pair with `when:` on a sibling toggle so only a taken move contributes. Validated leniently: a string that doesn't parse contributes no roll and is otherwise inert, never an error."
           ]
         },
         "when": { "type": "string", "minLength": 1, "description": "An expression (same language as `derived`) over this entry's other fields — the field shows only while it's true. A bare toggle id works: `when: is_weapon`." },
@@ -239,11 +245,6 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional free-text heading grouping this roll when the available rolls are listed. Rolls without one fall into a trailing \"Other\". Unlike a layout section it needs no id — nothing addresses it."
-        },
-        "when": {
-          "type": "string",
-          "minLength": 1,
-          "description": "A formula (same language as `derived`) deciding whether this character has the roll at all: false and the roll is neither listed nor rollable. This is how a move changes a move — `when: 'moves[\"read_about_this\"]'` on a second Act Under Pressure that rolls +Sharp. Unlike a `{…}` placeholder it needn't be numeric: `playbook == \"the_flake\"` works too. Leave it out and everyone has the roll."
         },
         "dice": {
           "type": "string",

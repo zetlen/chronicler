@@ -656,6 +656,14 @@ function chronicler_sheets_admin_field(string $name, array $property, $value, st
         case 'list':
             chronicler_sheets_admin_list_rows($name, $property, (array) $value);
             break;
+        case 'dice':
+            // Player-written dice notation (2026-07-25). Writes are lenient —
+            // it stores as text like the move text beside it — so the row
+            // renders a parse-error flag on reload instead of failing the save
+            // (see chronicler_sheets_admin_list_row).
+            echo '<input type="text" name="' . $name_attr . '" value="' . esc_attr((string) $value)
+                . '" class="regular-text code chr-input--dice" placeholder="2d6 + {cool}" spellcheck="false">';
+            break;
         case 'longtext':
             if ($context === 'top') {
                 // Editor ids allow [a-z0-9_] only; the bracketed POST name
@@ -724,6 +732,17 @@ function chronicler_sheets_admin_list_row(string $name, array $property, int $in
         echo '<label class="chr-field chr-field--' . esc_attr($field['type']) . '"' . $attrs . '>'
             . '<span class="chr-field__name">' . esc_html($field['label']) . '</span>';
         chronicler_sheets_admin_field($name . '[' . $key . '][' . $field['id'] . ']', $field, $value, 'row');
+        // A dice value that doesn't parse saved anyway (lenient write — a
+        // strict save_post rejection would silently discard the whole list),
+        // so the flag here is the error surface: visible, with the parser's
+        // own message, and the string still in the input to fix.
+        if ($field['type'] === 'dice' && trim((string) $value) !== '') {
+            $parsed_dice = chronicler_sheets_parse_dice((string) $value);
+            if (is_wp_error($parsed_dice)) {
+                echo '<span class="chr-dice-error" style="color:#b32d2e;font-size:12px;">'
+                    . esc_html($parsed_dice->get_error_message()) . ' This entry offers no roll until it parses.</span>';
+            }
+        }
         echo '</label>';
     }
     echo '<button type="button" class="button-link-delete chr-list-remove" aria-label="Remove entry">Remove</button></fieldset>';

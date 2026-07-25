@@ -8,7 +8,7 @@ if (!defined('ABSPATH') && !defined('CHRONICLER_TESTS')) {
 }
 
 const CHRONICLER_SHEETS_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text', 'longtext', 'list', 'opinions'];
-const CHRONICLER_SHEETS_LIST_FIELD_TYPES = ['text', 'longtext', 'number', 'toggle', 'select'];
+const CHRONICLER_SHEETS_LIST_FIELD_TYPES = ['text', 'longtext', 'number', 'toggle', 'select', 'dice'];
 const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 
 // Every key a property / list-field / option spec may carry, in the order
@@ -16,11 +16,11 @@ const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 // together). The write path rejects anything else: an unrecognized key is
 // most dangerous when it's a typo'd audience flag, which used to save
 // silently and publish the very value it meant to hide.
-const CHRONICLER_SHEETS_PROPERTY_KEYS = ['id', 'label', 'type', 'live', 'gm_only', 'owner_only', 'always_show', 'detail', 'derived', 'min', 'max', 'start', 'length', 'options', 'fields', 'entry_label'];
+const CHRONICLER_SHEETS_PROPERTY_KEYS = ['id', 'label', 'type', 'live', 'gm_only', 'owner_only', 'always_show', 'detail', 'derived', 'min', 'max', 'start', 'length', 'options', 'fields', 'entry_label', 'label_field'];
 const CHRONICLER_SHEETS_LIST_FIELD_KEYS = ['id', 'label', 'type', 'when', 'min', 'max', 'options'];
 const CHRONICLER_SHEETS_OPTION_KEYS = ['id', 'label'];
 const CHRONICLER_SHEETS_SECTION_KEYS = ['id', 'section', 'properties', 'masthead'];
-const CHRONICLER_SHEETS_ROLL_KEYS = ['id', 'label', 'section', 'when', 'dice', 'detail'];
+const CHRONICLER_SHEETS_ROLL_KEYS = ['id', 'label', 'section', 'dice', 'detail'];
 /** The whole document's keys — the last allowlist the parser was missing. */
 const CHRONICLER_SHEETS_TOP_KEYS = ['system', 'version', 'properties', 'layout', 'rolls'];
 
@@ -143,6 +143,13 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
         }
         if (isset($properties[$id])) {
             return new WP_Error('chronicler_invalid_template', "Duplicate property id \"$id\".");
+        }
+        // "entry" is reserved for entry-scoped roll formulas (a dice field's
+        // {entry["…"]}, 2026-07-25) — a property by that name would shadow the
+        // namespace. List FIELD ids stay free; entry scoping never nests.
+        // Lenient reads keep a stored one rendering, as always.
+        if (!$lenient && $id === 'entry') {
+            return new WP_Error('chronicler_invalid_template', 'Property "entry": that id is reserved — formulas use entry["…"] to reach a list entry\'s own fields. Name the property something else.');
         }
         // Unknown keys fail the save (lenient reads still tolerate them, so
         // documents stored under older, looser parsers keep rendering).
@@ -428,10 +435,16 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
 
 /**
  * One `rolls` entry, normalized to
- * ['id', 'label', 'section'|null, 'when'|null, 'dice', 'detail'|null, 'parsed']
+ * ['id', 'label', 'section'|null, 'dice', 'detail'|null, 'parsed']
  * — where 'parsed' is chronicler_sheets_parse_dice()'s term list, so nothing
- * reparses dice at roll time — or a WP_Error naming the problem. $draft is the
- * properties-only template the placeholder and `when` fences check against.
+ * reparses dice at roll time — or a WP_Error naming the problem. $draft is
+ * the properties-only template the placeholder fence checks against.
+ *
+ * A roll once took a `when` (2026-07-25 §4b, removed the same day): a
+ * per-character gate whose only real case — a playbook move changing a
+ * move — is a dice field on the character's own list entry now. A stored
+ * template that declared one reads leniently like any unknown key: the
+ * key drops, the roll stays.
  */
 function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $lenient = false) {
     if (!is_array($roll)) {
@@ -458,24 +471,6 @@ function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $
             return new WP_Error('chronicler_invalid_template', "Roll \"$id\": \"$optional\" must be a non-empty string.");
         }
     }
-    // "when" (2026-07-25 §4b): the roll exists for a character only while this
-    // holds — the PbtA move that changes another move. Checked here through
-    // exactly the fence a placeholder gets, minus the numeric rule: a `when`
-    // is a boolean test, so playbook == "the_flake" and moves["x"] are both
-    // legitimate, and there is nothing to add to any dice.
-    $when = $roll['when'] ?? null;
-    if ($when !== null) {
-        if (!is_string($when) || trim($when) === '') {
-            return new WP_Error(
-                'chronicler_invalid_template',
-                "Roll \"$id\": \"when\" must be a formula deciding whether this character has the roll, e.g. moves[\"read_about_this\"]."
-            );
-        }
-        $checked = chronicler_sheets_formula_check($when, $draft);
-        if (is_wp_error($checked)) {
-            return new WP_Error('chronicler_invalid_template', "Roll \"$id\": when: $when: " . $checked->get_error_message());
-        }
-    }
     $dice = $roll['dice'] ?? null;
     if (!is_string($dice) || trim($dice) === '') {
         return new WP_Error('chronicler_invalid_template', "Roll \"$id\": \"dice\" must be dice notation, e.g. \"2d6 + {cool}\".");
@@ -494,7 +489,6 @@ function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $
         'id' => $id,
         'label' => $roll['label'],
         'section' => $roll['section'] ?? null,
-        'when' => is_string($when) ? trim($when) : null,
         'dice' => trim($dice),
         'detail' => $roll['detail'] ?? null,
         'parsed' => $parsed,
@@ -576,6 +570,12 @@ function chronicler_sheets_check_constraints(string $id, string $type, array $pr
             $ids[$oid] = true;
         }
     }
+    // "label_field" designates which field names an entry in roll menus
+    // (2026-07-25). It only means something on a list, and a wrong
+    // designation must be a save error, not a silently wrong label.
+    if (isset($prop['label_field']) && $type !== 'list') {
+        return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"label_field\" only applies to list properties.");
+    }
     if ($type === 'list') {
         if (isset($prop['entry_label']) && (!is_string($prop['entry_label']) || $prop['entry_label'] === '')) {
             return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"entry_label\" must be a non-empty string.");
@@ -610,6 +610,15 @@ function chronicler_sheets_check_constraints(string $id, string $type, array $pr
             $err = chronicler_sheets_check_constraints("$id.$fid", $ftype, $field, $lenient);
             if (is_wp_error($err)) {
                 return $err;
+            }
+        }
+        if (isset($prop['label_field'])) {
+            $lf = $prop['label_field'];
+            if (!is_string($lf) || !isset($fieldIds[$lf])) {
+                return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"label_field\" must name one of this list's fields.");
+            }
+            if ($fieldIds[$lf] !== 'text') {
+                return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"label_field\" must name a text field — \"$lf\" is a {$fieldIds[$lf]} field.");
             }
         }
         // Second pass so "when" may reference fields declared in either order.

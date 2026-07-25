@@ -32,6 +32,15 @@ $chr_roll_template = chronicler_sheets_parse_template(json_encode([
             ['id' => 'nine_lives', 'label' => 'Nine Lives'],
         ]],
         ['id' => 'curse', 'label' => 'Curse', 'type' => 'number', 'min' => 0, 'max' => 6, 'gm_only' => true],
+        // A list whose entries can carry their own dice (2026-07-25). Empty by
+        // default, so sheets that don't set it contribute nothing and every
+        // pre-existing assertion below is undisturbed.
+        ['id' => 'playbook_moves', 'label' => 'Playbook Moves', 'type' => 'list', 'fields' => [
+            ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['id' => 'effect', 'label' => 'Description', 'type' => 'longtext'],
+            ['id' => 'has', 'label' => 'Has it', 'type' => 'toggle'],
+            ['id' => 'dice', 'label' => 'Roll', 'type' => 'dice', 'when' => 'has'],
+        ]],
     ],
     'layout' => [
         ['id' => 'stats', 'section' => 'Ratings', 'properties' => ['cool', 'sharp', 'tough', 'weird']],
@@ -40,21 +49,12 @@ $chr_roll_template = chronicler_sheets_parse_template(json_encode([
     'rolls' => [
         ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'section' => 'Basic Moves',
          'dice' => '2d6 + {cool}', 'detail' => 'when you do something under fire'],
-        // §4b: the same move, rolled with a different stat, and ONLY for a
-        // character who has taken it. Both entries exist — nothing is
-        // substituted, because the move is situational.
-        ['id' => 'act_under_pressure_read_about', 'label' => "Act Under Pressure (I've Read About This Sort of Thing)",
-         'section' => 'Basic Moves', 'when' => 'moves["read_about_this"]', 'dice' => '2d6 + {sharp}'],
         ['id' => 'kick_some_ass', 'label' => 'Kick Some Ass', 'section' => 'Basic Moves',
          'dice' => '2d6 + {tough}'],
         ['id' => 'ability_check', 'label' => 'Ability Check', 'section' => 'Attacks',
          'dice' => '2d20kh1 + {cool} - 1'],
         ['id' => 'curse_check', 'label' => 'Curse Check', 'section' => 'Attacks',
          'dice' => '1d6 + {curse}'],
-        // A gate over a stat only the GM can see: unavailable to a player
-        // SILENTLY, since announcing it would announce the stat.
-        ['id' => 'break_the_curse', 'label' => 'Break the Curse', 'section' => 'Attacks',
-         'when' => 'curse > 0', 'dice' => '2d6'],
         ['id' => 'use_magic', 'label' => 'Use Magic',
          'dice' => '2d6 + {weird + floor(luck["current"] / 2)}'],
     ],
@@ -88,8 +88,6 @@ $chr_roll_sheet = function (array $values, array $hidden = []) use ($chr_roll_te
 $chr_roll_values = ['cool' => 2, 'sharp' => 3, 'tough' => -1, 'weird' => 1, 'luck' => 5, 'curse' => 4, 'moves' => []];
 $player_sheet = $chr_roll_sheet($chr_roll_values, ['curse']);
 $gm_sheet = $chr_roll_sheet($chr_roll_values);
-// The same player, after taking the move that changes Act Under Pressure.
-$read_about_sheet = $chr_roll_sheet(['moves' => ['read_about_this']] + $chr_roll_values, ['curse']);
 
 // A scripted randomizer, so faces and totals are asserted exactly.
 $scripted = function (array $faces): callable {
@@ -166,64 +164,6 @@ check('a viewer who CAN see the stat rolls it', $allowed['response_type'] === 'i
 check('… with the die shown', str_contains($allowed_text, '[5]'));
 check('… and the stat applied', str_contains($allowed_text, '+4') && str_contains($allowed_text, '9'));
 
-// --- §4b: a move that changes a roll -----------------------------------------
-// A roll whose `when` is false does not exist for that character: absent from
-// the menu AND not rollable by exact name. The reply is the one an unknown
-// name gets, because saying "you don't have that" would reveal that it exists.
-
-$off_menu = json_encode(
-    Roll::respond('', $chr_roll_template, $player_sheet, $url, $scripted([])),
-    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-);
-check('a roll whose when is false is absent from the listing', !str_contains($off_menu, 'Read About'));
-check('… while its ungated twin is still listed', str_contains($off_menu, 'Act Under Pressure'));
-
-$off_name = Roll::respond('act_under_pressure_read_about', $chr_roll_template, $player_sheet, $url, $scripted([4, 3]));
-$off_name_text = json_encode($off_name, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-check('a gated-off roll is not rollable by its exact id', $off_name['response_type'] === 'ephemeral');
-check('… and answers exactly as an unknown name does', str_contains(strtolower($off_name_text), "don't know that roll"));
-check('… without revealing that the roll exists', !str_contains($off_name_text, 'Read About'));
-check('… and without throwing a die', !str_contains($off_name_text, '[4]'));
-check(
-    '… nor by its exact label',
-    str_contains(
-        strtolower(json_encode(Roll::respond("Act Under Pressure (I've Read About This Sort of Thing)", $chr_roll_template, $player_sheet, $url, $scripted([4, 3])))),
-        "don't know that roll"
-    )
-);
-
-// Same character, same template, one move checked.
-$on_menu = json_encode(
-    Roll::respond('', $chr_roll_template, $read_about_sheet, $url, $scripted([])),
-    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-);
-check('checking the move puts its roll on the menu', str_contains($on_menu, 'Read About'));
-check('… beside the ungated one — nothing is substituted', str_contains($on_menu, 'Act Under Pressure'));
-
-$on_roll = Roll::respond('act_under_pressure_read_about', $chr_roll_template, $read_about_sheet, $url, $scripted([4, 3]));
-$on_roll_text = json_encode($on_roll, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-check('a gated-on roll rolls', $on_roll['response_type'] === 'in_channel');
-check('… with its own stat (sharp 3, not cool 2)', str_contains($on_roll_text, '+3') && str_contains($on_roll_text, '=  *10*'));
-check(
-    'the ungated twin still rolls its own stat for the same character',
-    str_contains(
-        json_encode(Roll::respond('act_under_pressure', $chr_roll_template, $read_about_sheet, $url, $scripted([4, 3]))),
-        '=  *9*'
-    )
-);
-
-// A `when` the viewer-filtered sheet can't evaluate fails CLOSED and SILENT —
-// deliberately unlike the placeholder rule, which refuses out loud. There the
-// player named a roll they can see and deserves to know why it won't run; here
-// an explicit refusal would announce a GM-gated move.
-$gate_hidden = Roll::respond('break the curse', $chr_roll_template, $player_sheet, $url, $scripted([1, 1]));
-$gate_hidden_text = strtolower(json_encode($gate_hidden, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-check('a when over an invisible stat makes the roll unavailable', str_contains($gate_hidden_text, "don't know that roll"));
-check('… silently — no "you can\'t see that" refusal', !str_contains($gate_hidden_text, "can't see"));
-check('… and the roll is not named', !str_contains($gate_hidden_text, 'break the curse'));
-$gate_gm = Roll::respond('break the curse', $chr_roll_template, $gm_sheet, $url, $scripted([1, 1]));
-check('the viewer who CAN see the stat gets the roll', $gate_gm['response_type'] === 'in_channel');
-
 // --- No argument: the listing ------------------------------------------------
 
 $listing = Roll::respond('', $chr_roll_template, $player_sheet, $url, $scripted([]));
@@ -269,6 +209,130 @@ $ambiguous = Roll::respond('a', $chr_roll_template, $player_sheet, $url, $script
 check('an ambiguous roll is ephemeral', $ambiguous['response_type'] === 'ephemeral');
 check('an ambiguous roll names the candidates', str_contains($ambiguous['text'], 'Ability Check'));
 check('an ambiguous roll never rolls', !str_contains($ambiguous['text'], '='));
+
+// --- The merged menu (2026-07-25: a move carries its own roll) ---------------
+// A list entry with dice on it contributes a roll, and /game roll serves the
+// union: system rolls first, then each contributing list's section.
+
+$chr_moves_taken = [
+    ['name' => "I've Read About This Sort of Thing", 'effect' => "Act under pressure with +Sharp instead.\nSecond line never shows.", 'has' => true, 'dice' => '2d6 + {sharp}'],
+    ['name' => 'Listed But Untaken', 'effect' => '', 'has' => false, 'dice' => '2d6'],
+];
+$moves_sheet = $chr_roll_sheet(['playbook_moves' => $chr_moves_taken] + $chr_roll_values, ['curse']);
+
+$merged_menu = json_encode(
+    Roll::respond('', $chr_roll_template, $moves_sheet, $url, $scripted([])),
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
+check('a taken move with dice appears on the menu', str_contains($merged_menu, "I've Read About This Sort of Thing"));
+check('… under its list\'s label as the section', str_contains($merged_menu, 'Playbook Moves'));
+check('… after every system section', strpos($merged_menu, 'Attacks') < strpos($merged_menu, 'Playbook Moves'));
+check('… with its notation shown', str_contains($merged_menu, '2d6 + {sharp}'));
+check('… and its first description line as detail', str_contains($merged_menu, 'Act under pressure with +Sharp instead.')
+    && !str_contains($merged_menu, 'Second line never shows'));
+check('an untaken move stays off the menu', !str_contains($merged_menu, 'Listed But Untaken'));
+
+// Rolling a character-carried move: resolves by label, rolls the entry's own
+// dice with the character's stat substituted (sharp 3: 4 + 3 + 3 = 10).
+$move_roll = Roll::respond("i've read about this sort of thing", $chr_roll_template, $moves_sheet, $url, $scripted([4, 3]));
+$move_roll_text = json_encode($move_roll, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+check('a character roll rolls in_channel like any other', $move_roll['response_type'] === 'in_channel');
+check('… with the character\'s stat substituted', str_contains($move_roll_text, '+3') && str_contains($move_roll_text, '=  *10*'));
+check('… showing the entry\'s notation', str_contains($move_roll_text, '2d6 + {sharp}'));
+
+// A unique prefix reaches a character roll the same as a system one.
+check(
+    'a unique prefix resolves a character roll',
+    str_contains(
+        json_encode(Roll::respond("i've read", $chr_roll_template, $moves_sheet, $url, $scripted([4, 3]))),
+        '=  *10*'
+    )
+);
+
+// A character roll whose label collides with a system roll's label: the
+// AMBIGUITY reply, never a silent pick and never an override (decision 4).
+$collide_sheet = $chr_roll_sheet(['playbook_moves' => [
+    ['name' => 'Act Under Pressure', 'effect' => '', 'has' => true, 'dice' => '3d6'],
+]] + $chr_roll_values, ['curse']);
+$collide = Roll::respond('Act Under Pressure', $chr_roll_template, $collide_sheet, $url, $scripted([1, 1]));
+check('a label collision with a system roll is ambiguous', $collide['response_type'] === 'ephemeral'
+    && str_contains($collide['text'], 'Which one?'));
+check('… and never rolls', !str_contains($collide['text'], '='));
+// The system roll's ID still wins outright — ids are stage 1, and character
+// rolls have none, so an id-shaped query cannot ambiguate.
+check(
+    'the exact id still resolves the system roll outright',
+    str_contains(
+        json_encode(Roll::respond('act_under_pressure', $chr_roll_template, $collide_sheet, $url, $scripted([4, 3]))),
+        '=  *9*'
+    )
+);
+
+// Two entries sharing a name: ambiguous, never a guess.
+$twin_sheet = $chr_roll_sheet(['playbook_moves' => [
+    ['name' => 'Favored Weapon', 'effect' => '', 'has' => true, 'dice' => '1d8'],
+    ['name' => 'Favored Weapon', 'effect' => '', 'has' => true, 'dice' => '1d10'],
+]] + $chr_roll_values, ['curse']);
+$twins = Roll::respond('Favored Weapon', $chr_roll_template, $twin_sheet, $url, $scripted([1]));
+check('two same-named entries are ambiguous', str_contains($twins['text'], 'Which one?'));
+
+// The security rule holds for character dice too: an entry referencing a
+// stat the viewer can't see refuses for the player and rolls for the GM.
+$secret_moves = [['name' => 'Channel the Curse', 'effect' => '', 'has' => true, 'dice' => '1d6 + {curse}']];
+$secret_player = Roll::respond(
+    'Channel the Curse',
+    $chr_roll_template,
+    $chr_roll_sheet(['playbook_moves' => $secret_moves] + $chr_roll_values, ['curse']),
+    $url,
+    $scripted([5])
+);
+check('a character roll over an invisible stat refuses', $secret_player['response_type'] === 'ephemeral'
+    && str_contains(strtolower($secret_player['text']), "can't see"));
+$secret_gm = Roll::respond(
+    'Channel the Curse',
+    $chr_roll_template,
+    $chr_roll_sheet(['playbook_moves' => $secret_moves] + $chr_roll_values),
+    $url,
+    $scripted([5])
+);
+check('the GM rolls the same entry (5 + curse 4 = 9)', $secret_gm['response_type'] === 'in_channel'
+    && str_contains(json_encode($secret_gm, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), '=  *9*'));
+
+// A system with an empty rolls table but a contributing list still serves a
+// menu — the sheet is a legitimate source of rolls on its own.
+$chr_sheet_only_template = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Freeform',
+    'version' => 1,
+    'properties' => [
+        ['id' => 'edge', 'label' => 'Edge', 'type' => 'number', 'min' => -1, 'max' => 3],
+        ['id' => 'tricks', 'label' => 'Tricks', 'type' => 'list', 'fields' => [
+            ['id' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['id' => 'dice', 'label' => 'Roll', 'type' => 'dice'],
+        ]],
+    ],
+]));
+check('sheet-only fixture parses', is_array($chr_sheet_only_template), is_wp_error($chr_sheet_only_template) ? $chr_sheet_only_template->get_error_message() : '');
+$chr_sheet_only = [
+    'characterId' => 9, 'title' => 'Nix', 'canEdit' => false, 'system' => 'Freeform', 'layout' => [],
+    'properties' => [
+        $chr_sheet_only_template['properties']['edge'] + ['value' => 2, 'display' => '+2'],
+        $chr_sheet_only_template['properties']['tricks'] + ['value' => [['name' => 'Card Trick', 'dice' => '1d4 + {edge}']], 'display' => '1 entry'],
+    ],
+];
+$sheet_only_menu = Roll::respond('', $chr_sheet_only_template, $chr_sheet_only, $url, $scripted([]));
+check('a rolls-less system with sheet dice serves a menu, not a refusal', str_contains($sheet_only_menu['text'], 'Card Trick'));
+$sheet_only_roll = Roll::respond('card trick', $chr_sheet_only_template, $chr_sheet_only, $url, $scripted([3]));
+check('… and the sheet roll rolls (3 + 2 = 5)', $sheet_only_roll['response_type'] === 'in_channel'
+    && str_contains(json_encode($sheet_only_roll, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), '=  *5*'));
+
+// A truly empty union keeps refusing, mentioning both sources.
+$chr_sheet_only_empty = [
+    'characterId' => 9, 'title' => 'Nix', 'canEdit' => false, 'system' => 'Freeform', 'layout' => [],
+    'properties' => [$chr_sheet_only_template['properties']['edge'] + ['value' => 2, 'display' => '+2']],
+];
+$empty_union = Roll::respond('anything', $chr_sheet_only_template, $chr_sheet_only_empty, $url, $scripted([1]));
+check('an empty union still says no rolls', str_contains(strtolower($empty_union['text']), 'no rolls'));
+check('… and mentions dice on the sheet as the other source', str_contains(strtolower($empty_union['text']), 'dice'));
 
 // --- Wiring ------------------------------------------------------------------
 

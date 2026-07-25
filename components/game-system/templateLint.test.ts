@@ -11,8 +11,9 @@ describe("ENTRY_REF_TYPES (from template.schema.json)", () => {
     // CHRONICLER_SHEETS_LIST_FIELD_TYPES to, and that PHP's
     // schema-drift.test.php separately pins CHRONICLER_FORMULA_ENTRY_REF_TYPES
     // to — closing the loop across the PHP/JS boundary. The schema lists
-    // longtext among the list-field types; it's excluded here because a
-    // `when` expression can't meaningfully reference free text. Element order
+    // longtext and dice among the list-field types; they're excluded here
+    // because a `when` expression can't meaningfully reference free text,
+    // and a dice string is notation, not a referencable scalar. Element order
     // differs between the schema enum and ENTRY_REF_TYPES, so this compares
     // as a set.
     const listFieldTypes = (
@@ -20,7 +21,7 @@ describe("ENTRY_REF_TYPES (from template.schema.json)", () => {
         definitions: { listField: { properties: { type: { enum: string[] } } } };
       }
     ).definitions.listField.properties.type.enum;
-    const expected = listFieldTypes.filter((t) => t !== "longtext");
+    const expected = listFieldTypes.filter((t) => t !== "longtext" && t !== "dice");
     expect([...ENTRY_REF_TYPES].sort()).toEqual([...expected].sort());
   });
 });
