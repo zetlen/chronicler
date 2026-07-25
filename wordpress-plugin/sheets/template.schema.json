@@ -26,10 +26,15 @@
       "type": "array",
       "description": "Ordered sections grouping property ids for display. Any property left out falls into a trailing \"Other\" section.",
       "items": { "$ref": "#/definitions/section" }
+    },
+    "rolls": {
+      "type": "array",
+      "description": "The named things a character does — \"Act Under Pressure\", \"Longsword\" — each with the dice it rolls. Addressed by id from the Slack bot (/game roll).",
+      "items": { "$ref": "#/definitions/roll" }
     }
   },
   "x-chronicler-formula": {
-    "refTypes": ["number", "track", "counter", "toggle", "select", "text"],
+    "refTypes": ["number", "track", "counter", "toggle", "select", "checklist", "text"],
     "functions": [
       {
         "name": "floor",
@@ -115,7 +120,7 @@
         "derived": {
           "type": "string",
           "minLength": 1,
-          "description": "A formula (Symfony Expression Language) computed on every read from other properties. Supported on number and toggle. Never stored or directly editable. Reference properties by bare id; track/counter parts use brackets, e.g. harm[\"current\"]. Functions: floor, ceil, round, min, max."
+          "description": "A formula (Symfony Expression Language) computed on every read from other properties. Supported on number and toggle. Never stored or directly editable. Reference properties by bare id; track, counter and checklist parts use brackets, e.g. harm[\"current\"] or moves[\"the_big_entrance\"] (1 when checked, 0 when not). Functions: floor, ceil, round, min, max."
         },
         "min": { "type": "integer", "description": "Lower bound for a number property." },
         "max": { "type": "integer", "description": "Upper bound for a number or counter." },
@@ -205,6 +210,11 @@
       "additionalProperties": false,
       "required": ["section", "properties"],
       "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Machine name for the section, used to address it (e.g. from the Slack bot). Optional: when absent it is derived from the heading — lowercased, non-alphanumeric runs collapsed to \"_\" (\"Moves & Gear\" -> moves_gear). Give one explicitly when the heading can't produce a valid id, or when two headings would derive the same one."
+        },
         "section": { "type": "string", "description": "Section heading." },
         "properties": {
           "type": "array",
@@ -212,6 +222,35 @@
           "items": { "type": "string" }
         },
         "masthead": { "type": "boolean", "description": "Render inside the header card instead of as a body section." }
+      }
+    },
+    "roll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "dice"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Machine id for this roll — the first thing /game roll matches a player's word against."
+        },
+        "label": { "type": "string", "minLength": 1, "description": "Human-readable name, e.g. \"Act Under Pressure\"." },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional free-text heading grouping this roll when the available rolls are listed. Rolls without one fall into a trailing \"Other\". Unlike a layout section it needs no id — nothing addresses it."
+        },
+        "when": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A formula (same language as `derived`) deciding whether this character has the roll at all: false and the roll is neither listed nor rollable. This is how a move changes a move — `when: 'moves[\"read_about_this\"]'` on a second Act Under Pressure that rolls +Sharp. Unlike a `{…}` placeholder it needn't be numeric: `playbook == \"the_flake\"` works too. Leave it out and everyone has the roll."
+        },
+        "dice": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dice notation: terms joined by + and -. `NdM` rolls N dice of M sides; `NdMkhK` / `NdMklK` keeps the highest / lowest K (2d20kh1 is advantage, 4d6kh3 drops the lowest); a whole number is a constant; `{…}` holds a formula in the same language as `derived`, evaluated against this character and added as a number — e.g. \"2d6 + {cool}\" or \"1d20 + {floor(dex / 2)}\". At most 10 terms, 100 dice and 1000 sides per term."
+        },
+        "detail": { "type": "string", "minLength": 1, "description": "What the roll is for (e.g. \"when you do something under fire\"), shown with the result." }
       }
     }
   }

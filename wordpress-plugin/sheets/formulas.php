@@ -38,7 +38,7 @@ const CHRONICLER_FORMULA_BINARY_OPS = [
 const CHRONICLER_FORMULA_UNARY_OPS = ['-', '+', 'not', '!'];
 
 /** Property types a formula may reference, and how they appear in context. */
-const CHRONICLER_FORMULA_REF_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'text'];
+const CHRONICLER_FORMULA_REF_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text'];
 
 /** Whether the bundled expression engine is present (vendor/ built). */
 function chronicler_sheets_formula_available(): bool {
@@ -59,13 +59,20 @@ function chronicler_sheets_formula_engine(): ExpressionLanguage {
     return $el;
 }
 
-/** The context keys (and ["sub"] keys) each referencable property contributes. */
+/**
+ * The context keys (and ["sub"] keys) each referencable property contributes.
+ * A checklist's parts are its OPTION IDS — moves["read_about_this"] — which is
+ * the same bracket idiom track/counter use, so a formula can ask whether a
+ * character has a given move (2026-07-25 §4b).
+ */
 function chronicler_sheets_formula_subkeys(array $property): ?array {
     switch ($property['type']) {
         case 'track':
             return ['current', 'max'];
         case 'counter':
             return isset($property['max']) ? ['current', 'max'] : ['current'];
+        case 'checklist':
+            return array_column($property['options'] ?? [], 'id');
         default:
             return null; // scalar — referenced bare, no dotting
     }
@@ -73,8 +80,9 @@ function chronicler_sheets_formula_subkeys(array $property): ?array {
 
 /**
  * Evaluation context from a template + current values: scalars by id;
- * track/counter as {current, max}. Non-referencable types (checklist, list,
- * longtext) are omitted, so referencing one reads as an unknown name.
+ * track/counter as {current, max}; a checklist as a 0/1 map keyed by option
+ * id. Non-referencable types (list, longtext, opinions) are omitted, so
+ * referencing one reads as an unknown name.
  */
 function chronicler_sheets_formula_context(array $template, array $values): array {
     $context = [];
@@ -86,6 +94,18 @@ function chronicler_sheets_formula_context(array $template, array $values): arra
         $subkeys = chronicler_sheets_formula_subkeys($property);
         if ($subkeys === null) {
             $context[$id] = $value;
+            continue;
+        }
+        if ($property['type'] === 'checklist') {
+            // 0/1 rather than true/false: a move you have is worth adding up
+            // (`moves["a"] + moves["b"]` counts them), and it still reads as
+            // a boolean everywhere PHP treats 0 as false.
+            $checked = (array) $value;
+            $entry = [];
+            foreach ($subkeys as $option_id) {
+                $entry[$option_id] = in_array($option_id, $checked, true) ? 1 : 0;
+            }
+            $context[$id] = $entry;
             continue;
         }
         $entry = ['current' => (int) $value];
@@ -125,8 +145,8 @@ function chronicler_sheets_formula_check(string $expr, array $template) {
 
 /**
  * The fence: allow exactly the documented grammar, collect referenced
- * property ids, and require track/counter refs to name a part (bare `harm`
- * is ambiguous; `harm["current"]` is not). Returns WP_Error or null.
+ * property ids, and require track/counter/checklist refs to name a part (bare
+ * `harm` is ambiguous; `harm["current"]` is not). Returns WP_Error or null.
  */
 function chronicler_sheets_formula_walk(Node $node, array $template, array &$refs, ?string $inSubscriptOf) {
     $bad = fn (string $m) => new WP_Error('chronicler_formula_grammar', $m);
@@ -166,7 +186,7 @@ function chronicler_sheets_formula_walk(Node $node, array $template, array &$ref
         $property = $template['properties'][$name] ?? null;
         $subkeys = $property !== null ? chronicler_sheets_formula_subkeys($property) : null;
         if ($subkeys === null) {
-            return $bad("\"$name\" has no [\"$key\"] — only tracks and counters have parts.");
+            return $bad("\"$name\" has no [\"$key\"] — only tracks, counters and checklists have parts.");
         }
         if (!in_array($key, $subkeys, true)) {
             return $bad("\"$name\" has no [\"$key\"] — it has [\"" . implode('"] / ["', $subkeys) . '"].');

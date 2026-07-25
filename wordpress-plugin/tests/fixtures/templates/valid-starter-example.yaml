@@ -74,7 +74,9 @@ properties:
       - { id: monstrous, label: The Monstrous }
       - { id: mundane, label: The Mundane }
 
-  # Any subset of options, each checked on or off.
+  # Any subset of options, each checked on or off. A formula can ask about one
+  # option — moves["nine_lives"] is 1 when checked, 0 when not — which is how
+  # a move gives a character a roll nobody else has (see "when" below).
   - id: moves
     label: Moves
     type: checklist
@@ -82,6 +84,7 @@ properties:
       - { id: the_big_entrance, label: The Big Entrance }
       - { id: nine_lives, label: Nine Lives }
       - { id: crime_pays, label: Crime Pays }
+      - { id: read_about_this, label: I've Read About This Sort of Thing }
 
   # A repeatable list; each entry gets these fields. "when" gates a field
   # behind an expression over the entry's other fields — a bare toggle id
@@ -129,12 +132,50 @@ properties:
 layout:
   # Ordered sections of property ids. A masthead section renders inside the
   # header card; anything never placed lands in a trailing "Other" section.
+  # Each section also has an id — the name it is addressed by. Leave it out
+  # and it derives from the heading ("Moves & Gear" becomes moves_gear); give
+  # one, as Ratings does below, when you want a different word to work.
   - section: Hunter
     masthead: true
     properties: [hunter_type]
-  - section: Ratings
+  - id: stats
+    section: Ratings
     properties: [charm, cool, sharp, tough, weird]
   - section: Status
     properties: [harm, luck, unstable, doomed]
   - section: Moves & Gear
     properties: [moves, gear]
+
+rolls:
+  # The rolls this system offers, each addressed by its id (/game roll
+  # act_under_pressure) or its label. Dice notation covers the random part —
+  # 2d6, 4d6kh3 to keep the highest three, 2d20kh1 for advantage — and
+  # anything between braces is a formula in the same language as `derived`,
+  # evaluated against this character and added as a number. "section" is
+  # optional grouping for the listing; rolls without one list last.
+  - id: act_under_pressure
+    label: Act Under Pressure
+    section: Basic Moves
+    dice: "2d6 + {cool}"
+    detail: "when you do something under fire"
+  # "when" gates a roll on the character: false and the roll is neither listed
+  # nor rollable, so a move can hand one hunter an option nobody else has.
+  # Both entries stay on the menu — the move is situational ("act under
+  # pressure to do something you've read about"), so the player picks.
+  - id: act_under_pressure_read_about
+    label: Act Under Pressure (I've Read About This Sort of Thing)
+    section: Basic Moves
+    when: 'moves["read_about_this"]'
+    dice: "2d6 + {sharp}"
+    detail: "when acting under pressure on something you've read about"
+  - id: kick_some_ass
+    label: Kick Some Ass
+    section: Basic Moves
+    dice: "2d6 + {tough}"
+    detail: "when you get into a fight"
+  # Braces take a whole formula, not just a property name: this one spends
+  # what Luck is left, halved and rounded down.
+  - id: use_magic
+    label: Use Magic
+    dice: '2d6 + {weird + floor(luck["current"] / 2)}'
+    detail: "when you work a ritual"

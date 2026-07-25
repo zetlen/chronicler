@@ -2,7 +2,7 @@
 // relational linter (templateLint.ts) and the document outline that feeds
 // completion (yamlContext.ts) — one implementation so lint and completion
 // can never disagree about how a key or value is read.
-import { isScalar, isSeq } from "yaml";
+import { isMap, isScalar, isSeq } from "yaml";
 import type { Node, Pair, YAMLMap, YAMLSeq } from "yaml";
 
 export const mapGet = (
@@ -40,6 +40,22 @@ export const hasNonNullKey = (map: YAMLMap, key: string): boolean => {
     return false;
   }
   return !(isScalar(node) && node.value === null);
+};
+
+/**
+ * The declared option ids of a select or checklist, in order. A checklist's
+ * are also its formula parts — moves["the_big_entrance"] — so lint,
+ * completion and the PHP context builder read the same list.
+ */
+export const optionIds = (map: YAMLMap): string[] => {
+  const ids: string[] = [];
+  for (const option of seqItems(mapGet(map, "options"))) {
+    const id = isMap(option) ? stringOf(mapGet(option as YAMLMap, "id")) : undefined;
+    if (id !== undefined) {
+      ids.push(id);
+    }
+  }
+  return ids;
 };
 
 /** [from, to] document offsets for a node; degenerate but valid when absent. */

@@ -8,9 +8,9 @@ namespace Chronicler\Slack\Bot;
  * arrays out) so tests/run.php covers the whole router; the only
  * WordPress in the chain is Inbound's transport shell.
  *
- * help, unknown, and link ship today. Later phases add match arms —
- * stats/sheet/roll (reads), stat (writes) — each implemented in its own
- * class and dispatched from here, the way Link is.
+ * help, unknown, link, my and roll ship today. Later phases add match arms
+ * — stat (writes) — each implemented in its own class and dispatched from
+ * here, the way Link, My and Roll are.
  */
 final class Commands
 {
@@ -34,9 +34,8 @@ final class Commands
     public const SUBCOMMANDS = [
         ['help', 'this summary'],
         ['link', 'connect your Slack account to your character'],
-        ['stats', "your character's current stats (coming soon)"],
-        ['sheet', 'link to a character sheet (coming soon)'],
-        ['roll', 'roll a stat with your current modifier (coming soon)'],
+        ['my', 'show your character — a stat, a section, or everything'],
+        ['roll', "roll one of your system's rolls"],
     ];
 
     /** Route a verified slash-command payload to a response body. */
@@ -46,6 +45,8 @@ final class Commands
         return match ($sub) {
             '', 'help' => self::help(),
             'link' => Link::handle($params),
+            'my' => My::handle($params),
+            'roll' => Roll::handle($params),
             default => self::unknown($sub),
         };
     }

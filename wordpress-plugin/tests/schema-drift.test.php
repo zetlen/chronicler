@@ -55,6 +55,22 @@ check(
     is_array($chr_schema)
         && array_keys($chr_schema['definitions']['option']['properties'] ?? []) === CHRONICLER_SHEETS_OPTION_KEYS
 );
+check(
+    'schema section keys match CHRONICLER_SHEETS_SECTION_KEYS (same values, same order)',
+    is_array($chr_schema)
+        && array_keys($chr_schema['definitions']['section']['properties'] ?? []) === CHRONICLER_SHEETS_SECTION_KEYS
+);
+check(
+    'schema roll keys match CHRONICLER_SHEETS_ROLL_KEYS (same values, same order)',
+    is_array($chr_schema)
+        && array_keys($chr_schema['definitions']['roll']['properties'] ?? []) === CHRONICLER_SHEETS_ROLL_KEYS
+);
+// The root object's own keys, pinned the same way now that the PHP parser has
+// a top-level allowlist too (rolls, 2026-07-25).
+check(
+    'schema root keys match CHRONICLER_SHEETS_TOP_KEYS (same values, same order)',
+    is_array($chr_schema) && array_keys($chr_schema['properties'] ?? []) === CHRONICLER_SHEETS_TOP_KEYS
+);
 
 $chr_id_pattern = $chr_schema['definitions']['property']['properties']['id']['pattern'] ?? null;
 check(
@@ -64,6 +80,14 @@ check(
 check(
     'schema listField id pattern matches the property id pattern',
     is_array($chr_schema) && ($chr_schema['definitions']['listField']['properties']['id']['pattern'] ?? null) === $chr_id_pattern
+);
+check(
+    'schema section id pattern matches the property id pattern',
+    is_array($chr_schema) && ($chr_schema['definitions']['section']['properties']['id']['pattern'] ?? null) === $chr_id_pattern
+);
+check(
+    'schema roll id pattern matches the property id pattern',
+    is_array($chr_schema) && ($chr_schema['definitions']['roll']['properties']['id']['pattern'] ?? null) === $chr_id_pattern
 );
 
 // --- Drift check #3: formula vocabulary (#149) -------------------------------

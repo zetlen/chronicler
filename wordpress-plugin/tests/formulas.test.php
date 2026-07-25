@@ -19,10 +19,15 @@ $formula_template = chronicler_sheets_parse_template(json_encode([
         ]],
         ['id' => 'moves', 'label' => 'Moves', 'type' => 'checklist', 'options' => [
             ['id' => 'a', 'label' => 'A'],
+            ['id' => 'read_about_this', 'label' => "I've Read About This Sort of Thing"],
         ]],
         ['id' => 'toughness', 'label' => 'Toughness', 'type' => 'number', 'max' => 12, 'derived' => 'floor(vigor / 2) + 2 + armor'],
         ['id' => 'bloodied', 'label' => 'Bloodied', 'type' => 'toggle', 'derived' => 'harm["current"] >= harm["max"] / 2'],
         ['id' => 'doubled', 'label' => 'Doubled', 'type' => 'number', 'derived' => 'toughness * 2'],
+        // A checklist option is a 0/1 fact about the character, so a formula
+        // can branch on one (2026-07-25 §4b: this is what lets a MOVE change
+        // what a character can roll).
+        ['id' => 'prepared', 'label' => 'Prepared', 'type' => 'number', 'derived' => 'moves["read_about_this"] ? 2 : 0'],
     ],
     'layout' => [],
 ]));
@@ -35,7 +40,11 @@ check('context: number is scalar', $ctx['vigor'] === 7);
 check('context: track becomes {current, max}', $ctx['harm'] === ['current' => 3, 'max' => 7]);
 check('context: counter without max has only current', $ctx['ammo'] === ['current' => 2]);
 check('context: select is its id string', $ctx['playbook'] === 'spooky');
-check('context: checklist is not referencable', !array_key_exists('moves', $ctx));
+// A checklist contributes its OPTION IDS as parts, each 0 or 1 — the same
+// shape track/counter use, addressed the same bracket way (§4b).
+check('context: unchecked checklist is a 0/1 map of its options', $ctx['moves'] === ['a' => 0, 'read_about_this' => 0]);
+$ctx_checked = chronicler_sheets_formula_context($formula_template, ['moves' => ['read_about_this']]);
+check('context: a checked option is 1', $ctx_checked['moves'] === ['a' => 0, 'read_about_this' => 1]);
 
 // --- fence + reference checking -------------------------------------------------
 
@@ -57,6 +66,24 @@ check(
 
 $ok = chronicler_sheets_formula_check('playbook == "spooky" and vigor > 3', $formula_template);
 check('check: select comparison with a string passes', is_array($ok), is_wp_error($ok) ? $ok->get_error_message() : '');
+
+$ok = chronicler_sheets_formula_check('moves["read_about_this"] and vigor > 3', $formula_template);
+check('check: a checklist option reference passes', is_array($ok), is_wp_error($ok) ? $ok->get_error_message() : '');
+check('check: a checklist ref is collected under its property id', is_array($ok) && $ok['refs'] === ['moves', 'vigor']);
+
+$err = chronicler_sheets_formula_check('moves + 1', $formula_template);
+check(
+    'check: bare checklist ref is rejected with guidance',
+    is_wp_error($err) && str_contains($err->get_error_message(), 'moves["a"]')
+);
+
+$err = chronicler_sheets_formula_check('moves["read_about_that"]', $formula_template);
+check(
+    'check: an unknown checklist option names itself and the real ones',
+    is_wp_error($err)
+        && str_contains($err->get_error_message(), 'read_about_that')
+        && str_contains($err->get_error_message(), 'read_about_this')
+);
 
 $err = chronicler_sheets_formula_check('vigour / 2', $formula_template);
 check('check: unknown name is a positional error', is_wp_error($err) && str_contains($err->get_error_message(), 'vigour'));
@@ -106,6 +133,13 @@ check('compute: bloodied false below the threshold (3 < 3.5)', $computed['bloodi
 
 $computed = chronicler_sheets_compute_derived($formula_template, ['vigor' => 12, 'armor' => 99, 'harm' => 0] + $values);
 check('compute: numbers clamp to the property bounds', $computed['toughness'] === 12);
+
+// Both states of the gating move, since that is the whole point of §4b.
+check('compute: an unchecked option reads as 0', chronicler_sheets_compute_derived($formula_template, $values)['prepared'] === 0);
+check(
+    'compute: a checked option reads as 1',
+    chronicler_sheets_compute_derived($formula_template, ['moves' => ['read_about_this']] + $values)['prepared'] === 2
+);
 
 // --- parse-time validation ------------------------------------------------------
 

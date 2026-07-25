@@ -26,16 +26,29 @@ export const FORMULA_REF_TYPES: readonly string[] = vocabulary.refTypes;
 export const FORMULA_FUNCTION_NAMES: readonly string[] =
   FORMULA_FUNCTIONS.map((fn) => fn.name);
 
+/** Property types addressed with a ["part"] rather than by bare id. */
+export const FORMULA_PART_TYPES = ["track", "counter", "checklist"] as const;
+
+/** Whether a property is referenced as name["part"] rather than bare. */
+export function hasFormulaParts(type: string | undefined): boolean {
+  return (FORMULA_PART_TYPES as readonly string[]).includes(type ?? "");
+}
+
 /**
- * The parts a track/counter exposes to formulas (mirrors PHP's
+ * The parts a track/counter/checklist exposes to formulas (mirrors PHP's
  * chronicler_sheets_formula_subkeys: a counter has ["max"] only when it
- * declares max — presence-based, like PHP's isset). Shared by lint hints and
- * autocomplete so their guidance can never disagree.
+ * declares max — presence-based, like PHP's isset; a checklist's parts are
+ * its option ids, each 1 when checked). Shared by lint hints and autocomplete
+ * so their guidance can never disagree.
  */
 export function formulaParts(property: {
   type: string;
   hasMax: boolean;
+  options?: string[];
 }): string[] {
+  if (property.type === "checklist") {
+    return property.options ?? [];
+  }
   if (property.type === "track") {
     return ["current", "max"];
   }

@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.25.0
+Stable tag: 4.26.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.26.0 =
+* Slack bot: /game my <thing> shows any part of your linked character — one stat, a whole section, or the lot — and /game roll <name> rolls one of the rolls your game system declares, with your own modifiers already worked in and every die shown. Both read your sheet through a single new visibility gate, so game-master-only fields stay out of Slack no matter who asks.
 
 = 4.25.0 =
 * Slack bot skeleton: the /game slash command answers from this site (signature-verified inbound endpoints — the plugin's first, deliberately reversing the old outbound-only policy). Settings gains a Signing Secret field and a "Test inbound endpoint" check. The Slack app manifest now includes the command, message shortcuts, interactivity, and the commands and chat:write scopes — update your Slack app's manifest once after upgrading.

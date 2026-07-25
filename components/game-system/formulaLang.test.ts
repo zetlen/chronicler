@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FORMULA_FUNCTIONS,
   FORMULA_REF_TYPES,
+  formulaParts,
   scanFormula,
 } from "./formulaLang";
 
@@ -27,7 +28,25 @@ describe("formula vocabulary (from template.schema.json)", () => {
       "counter",
       "toggle",
       "select",
+      "checklist",
       "text",
+    ]);
+  });
+
+  it("names a checklist's options as its formula parts", () => {
+    expect(
+      formulaParts({
+        type: "checklist",
+        hasMax: false,
+        options: ["the_big_entrance", "nine_lives"],
+      }),
+    ).toEqual(["the_big_entrance", "nine_lives"]);
+    expect(formulaParts({ type: "track", hasMax: false })).toEqual([
+      "current",
+      "max",
+    ]);
+    expect(formulaParts({ type: "counter", hasMax: false })).toEqual([
+      "current",
     ]);
   });
 });

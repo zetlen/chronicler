@@ -149,7 +149,12 @@ if (!function_exists('chronicler_sheets_get_value')) {
     }
 }
 if (!function_exists('chronicler_sheets_get_detail')) {
-    function chronicler_sheets_get_detail($post_id, array $property) { return ''; }
+    // Mirrors post-types.php: the character's chr_detail_<id> override (over
+    // the shared harness meta map) beats the template's system default.
+    function chronicler_sheets_get_detail($post_id, array $property) {
+        $override = (string) ($GLOBALS['chr_test_post_meta'][$post_id]['chr_detail_' . $property['id']] ?? '');
+        return $override !== '' ? $override : (string) ($property['detail'] ?? '');
+    }
 }
 if (!function_exists('chronicler_sheets_is_npc')) {
     // Mirrors post-types.php's reader over the shared harness meta map

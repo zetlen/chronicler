@@ -86,8 +86,13 @@ $chr_legacy_rules = json_encode([
         ['when' => ['prop' => 'harm', 'gte' => 7], 'set' => ['prop' => 'doomed', 'value' => true]],
     ],
 ]);
-$chr_legacy_parsed = chronicler_sheets_parse_template($chr_legacy_rules);
-check('a stored template with a legacy rules key still parses', is_array($chr_legacy_parsed));
+// Since the top-level key allowlist arrived (rolls, 2026-07-25) a stale
+// rules key fails the WRITE path like any other unknown key — the same
+// verdict template.schema.json has always given the editor. A stored
+// document still READS: lenient parsing drops the key and renders.
+check('re-saving a template with a legacy rules key is an error', is_wp_error(chronicler_sheets_parse_template($chr_legacy_rules)));
+$chr_legacy_parsed = chronicler_sheets_parse_template($chr_legacy_rules, true);
+check('a stored template with a legacy rules key still parses leniently', is_array($chr_legacy_parsed));
 check('legacy rules are dropped, not carried', is_array($chr_legacy_parsed) && !array_key_exists('rules', $chr_legacy_parsed));
 
 // Defaults
@@ -526,6 +531,76 @@ $mh['layout'][0]['masthead'] = 'yes';
 check('non-bool masthead is an error', is_wp_error(chronicler_sheets_parse_template(json_encode($mh))));
 check('Other section carries masthead false', end($secs)['masthead'] === false);
 
+// --- section ids ---
+// The machine name a section is addressed by (/game my stats), mirroring the
+// id/label split properties already use: `id` is the name, `section` is the
+// heading. Optional in the file, guaranteed after normalization.
+check('a heading derives its id', chronicler_sheets_section_id('Ratings') === 'ratings');
+check('non-alphanumeric runs collapse to one underscore', chronicler_sheets_section_id('Moves & Gear') === 'moves_gear');
+check('surrounding and inner whitespace collapses too', chronicler_sheets_section_id('  Spaced  Out ') === 'spaced_out');
+check('a heading that cannot make a valid id derives null', chronicler_sheets_section_id('12 Things') === null);
+check('a heading with nothing alphanumeric derives null', chronicler_sheets_section_id('!!!') === null);
+check('an empty heading derives null', chronicler_sheets_section_id('') === null);
+
+check(
+    'an id-less template still parses and every entry gains a derived id',
+    is_array($t) && $t['layout'][0]['id'] === 'ratings' && $t['layout'][1]['id'] === 'status'
+);
+check('the synthetic trailing Other section carries id "other"', end($secs)['id'] === 'other');
+
+$sid_explicit = json_decode($motw, true);
+$sid_explicit['layout'][0]['id'] = 'stats';
+$sid_explicit_t = chronicler_sheets_parse_template(json_encode($sid_explicit));
+check('an explicit id beats derivation', is_array($sid_explicit_t) && $sid_explicit_t['layout'][0]['id'] === 'stats');
+check('the heading is left alone by an explicit id', is_array($sid_explicit_t) && $sid_explicit_t['layout'][0]['section'] === 'Ratings');
+
+$sid_bad = json_decode($motw, true);
+$sid_bad['layout'][0]['id'] = 'Stats!';
+check('an explicit id must match the id pattern', is_wp_error(chronicler_sheets_parse_template(json_encode($sid_bad))));
+
+// "Ratings!" derives "ratings" too — the collision the parser has to catch,
+// since two sections answering to one name make /game my ambiguous.
+$sid_dup = json_decode($motw, true);
+$sid_dup['layout'][1]['section'] = 'Ratings!';
+$sid_dup_err = chronicler_sheets_parse_template(json_encode($sid_dup));
+check('two sections deriving the same id is a save error', is_wp_error($sid_dup_err));
+check('the collision error names the id', is_wp_error($sid_dup_err) && strpos($sid_dup_err->get_error_message(), 'ratings') !== false);
+
+$sid_dup_explicit = json_decode($motw, true);
+$sid_dup_explicit['layout'][1]['id'] = 'ratings';
+check('an explicit id colliding with a derived one is a save error', is_wp_error(chronicler_sheets_parse_template(json_encode($sid_dup_explicit))));
+
+$sid_underivable = json_decode($motw, true);
+$sid_underivable['layout'][0]['section'] = '12 Things';
+$sid_underivable_err = chronicler_sheets_parse_template(json_encode($sid_underivable));
+check('an underivable heading with no explicit id is a save error', is_wp_error($sid_underivable_err));
+check(
+    'the underivable error names the section it is about',
+    is_wp_error($sid_underivable_err) && strpos($sid_underivable_err->get_error_message(), '12 Things') !== false
+);
+$sid_underivable['layout'][0]['id'] = 'twelve_things';
+check('an explicit id rescues an underivable heading', is_array(chronicler_sheets_parse_template(json_encode($sid_underivable))));
+
+// Section keys had no allowlist until now, so `mastheed: true` saved
+// silently and did nothing — the same hazard the property allowlist closed.
+$sid_typo = json_decode($motw, true);
+$sid_typo['layout'][0]['mastheed'] = true;
+$sid_typo_err = chronicler_sheets_parse_template(json_encode($sid_typo));
+check('an unknown section key is a save error', is_wp_error($sid_typo_err));
+check(
+    'the unknown-key error suggests the key that was meant',
+    is_wp_error($sid_typo_err) && strpos($sid_typo_err->get_error_message(), 'masthead') !== false
+);
+
+// A template stored before ids existed must keep RENDERING, so the lenient
+// read path degrades to a positional id rather than failing the whole sheet.
+$sid_lenient = json_decode($motw, true);
+$sid_lenient['layout'][0]['section'] = '12 Things';
+$sid_lenient_t = chronicler_sheets_parse_template(json_encode($sid_lenient), true);
+check('a lenient read of an underivable heading still parses', is_array($sid_lenient_t));
+check('the lenient fallback id is positional', is_array($sid_lenient_t) && $sid_lenient_t['layout'][0]['id'] === 'section_1');
+check('the lenient fallback leaves the other ids derived', is_array($sid_lenient_t) && $sid_lenient_t['layout'][1]['id'] === 'status');
+
 // --- unfilled / placeholder detection (issue #67) ---
 check('empty text is unfilled', chronicler_sheets_is_unfilled($props['look'], ''));
 check('whitespace-only text is unfilled', chronicler_sheets_is_unfilled($props['look'], "  \n "));
@@ -675,3 +750,199 @@ check(
 );
 $chr_op_write = $chr_op_prop === null ? null : chronicler_sheets_apply_op($chr_op_prop, [], 'set', []);
 check('generic apply_op refuses opinions', is_wp_error($chr_op_write));
+
+// --- rolls (2026-07-25): the named things a character does -------------------
+// A roll is declared once in a top-level table so /game roll can resolve a
+// name the same disciplined way /game my does — and so a typo'd {col} is an
+// error in the Game System editor rather than a mystery at the table.
+$chr_roll_tpl = function (array $rolls, array $extra_properties = []) use ($motw) {
+    $data = json_decode($motw, true);
+    $data['properties'] = array_merge($data['properties'], $extra_properties);
+    $data['rolls'] = $rolls;
+    return json_encode($data);
+};
+$chr_why = function ($parsed) {
+    return is_wp_error($parsed) ? $parsed->get_error_message() : '';
+};
+
+$chr_rolls = chronicler_sheets_parse_template($chr_roll_tpl([
+    ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'section' => 'Basic Moves', 'dice' => '2d6 + {cool}', 'detail' => 'when you do something under fire'],
+    ['id' => 'last_breath', 'label' => 'Last Breath', 'dice' => '2d6 - {harm["current"]}'],
+]));
+check('a rolls block parses', is_array($chr_rolls), $chr_why($chr_rolls));
+check(
+    'rolls normalize to a table keyed by id, in declaration order',
+    is_array($chr_rolls) && array_keys($chr_rolls['rolls']) === ['act_under_pressure', 'last_breath']
+);
+check(
+    'a roll keeps its label, section, detail and dice string',
+    is_array($chr_rolls)
+        && $chr_rolls['rolls']['act_under_pressure']['id'] === 'act_under_pressure'
+        && $chr_rolls['rolls']['act_under_pressure']['label'] === 'Act Under Pressure'
+        && $chr_rolls['rolls']['act_under_pressure']['section'] === 'Basic Moves'
+        && $chr_rolls['rolls']['act_under_pressure']['detail'] === 'when you do something under fire'
+        && $chr_rolls['rolls']['act_under_pressure']['dice'] === '2d6 + {cool}'
+);
+check(
+    'a roll carries its parsed dice, so nothing reparses at roll time',
+    is_array($chr_rolls)
+        && $chr_rolls['rolls']['act_under_pressure']['parsed']['terms'][0]['count'] === 2
+        && $chr_rolls['rolls']['act_under_pressure']['parsed']['terms'][1]['expression'] === 'cool'
+);
+check(
+    'an omitted section and detail come back null',
+    is_array($chr_rolls) && $chr_rolls['rolls']['last_breath']['section'] === null && $chr_rolls['rolls']['last_breath']['detail'] === null
+);
+check('a template with no rolls gets an empty rolls table', is_array($t) && $t['rolls'] === []);
+
+$chr_roll_dup = chronicler_sheets_parse_template($chr_roll_tpl([
+    ['id' => 'aim', 'label' => 'Aim', 'dice' => '2d6'],
+    ['id' => 'aim', 'label' => 'Aim Again', 'dice' => '2d6'],
+]));
+check('a duplicate roll id is an error', is_wp_error($chr_roll_dup));
+check('the duplicate-roll error names the id', is_wp_error($chr_roll_dup) && strpos($chr_roll_dup->get_error_message(), 'aim') !== false);
+
+check(
+    'a roll id must match the id pattern',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'Act Under Pressure', 'label' => 'A', 'dice' => '2d6']])))
+);
+check(
+    'a roll needs a label',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'aim', 'dice' => '2d6']])))
+);
+check(
+    'a roll needs dice',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'aim', 'label' => 'Aim']])))
+);
+check(
+    'an empty roll section is an error',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'aim', 'label' => 'Aim', 'dice' => '2d6', 'section' => '']])))
+);
+
+$chr_roll_bad_dice = chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'aim', 'label' => 'Aim', 'dice' => '2x6']]));
+check('unparseable dice is a save error', is_wp_error($chr_roll_bad_dice));
+check(
+    'the dice error quotes the dice problem and names the roll',
+    is_wp_error($chr_roll_bad_dice)
+        && strpos($chr_roll_bad_dice->get_error_message(), '2x6') !== false
+        && strpos($chr_roll_bad_dice->get_error_message(), 'aim') !== false
+);
+
+$chr_roll_typo = chronicler_sheets_parse_template($chr_roll_tpl([['id' => 'aim', 'label' => 'Aim', 'dise' => '2d6', 'dice' => '2d6']]));
+check('an unknown roll key is a save error', is_wp_error($chr_roll_typo));
+check(
+    'the unknown-roll-key error suggests the key that was meant',
+    is_wp_error($chr_roll_typo) && strpos($chr_roll_typo->get_error_message(), 'dice') !== false
+);
+
+// Top-level keys had no allowlist at all until rolls arrived: a mistyped
+// "rols:" silently did nothing, which is exactly the hazard the property and
+// section allowlists already closed.
+$chr_top_typo = json_decode($motw, true);
+$chr_top_typo['rols'] = [];
+$chr_top_typo_err = chronicler_sheets_parse_template(json_encode($chr_top_typo));
+check('an unknown top-level key is a save error', is_wp_error($chr_top_typo_err));
+check(
+    'the unknown-top-level-key error suggests the key that was meant',
+    is_wp_error($chr_top_typo_err) && strpos($chr_top_typo_err->get_error_message(), 'rolls') !== false
+);
+check('a lenient read still tolerates an unknown top-level key', is_array(chronicler_sheets_parse_template(json_encode($chr_top_typo), true)));
+
+// Placeholders are Expression Language, checked at save through the same
+// fence and dry run `derived` uses — against the declared properties, which
+// the parser has right there.
+$chr_roll_ph = function (string $expression, array $extra_properties = []) use ($chr_roll_tpl) {
+    return chronicler_sheets_parse_template($chr_roll_tpl(
+        [['id' => 'aim', 'label' => 'Aim', 'dice' => '2d6 + {' . $expression . '}']],
+        $extra_properties
+    ));
+};
+check('a placeholder naming an undeclared property is a save error', is_wp_error($chr_roll_ph('col')));
+check('a placeholder naming a text property is a save error', is_wp_error($chr_roll_ph('look')));
+check('a placeholder naming a checklist property is a save error', is_wp_error($chr_roll_ph('moves')));
+check('a placeholder naming a select property is a save error', is_wp_error($chr_roll_ph('kind', [
+    ['id' => 'kind', 'label' => 'Kind', 'type' => 'select', 'options' => [['id' => 'a', 'label' => 'A']]],
+])));
+check('a bare track reference is a save error (it needs a part)', is_wp_error($chr_roll_ph('harm')));
+check('a track part is fine', is_array($chr_roll_ph('harm["current"]')), $chr_why($chr_roll_ph('harm["current"]')));
+$chr_roll_arith = $chr_roll_ph('floor(dex / 2)', [['id' => 'dex', 'label' => 'Dexterity', 'type' => 'number', 'min' => 0]]);
+check('arithmetic over declared numerics is fine', is_array($chr_roll_arith), $chr_why($chr_roll_arith));
+$chr_roll_derived = $chr_roll_ph('str_mod', [
+    ['id' => 'str', 'label' => 'Strength', 'type' => 'number', 'min' => 0],
+    ['id' => 'str_mod', 'label' => 'Strength Modifier', 'type' => 'number', 'derived' => 'floor((str - 10) / 2)'],
+]);
+check('a derived property is fine in a placeholder', is_array($chr_roll_derived), $chr_why($chr_roll_derived));
+check('a placeholder that produces true/false rather than a number is a save error', is_wp_error($chr_roll_ph('cool > 1')));
+$chr_roll_ph_err = $chr_roll_ph('col');
+check(
+    'the placeholder error names the roll and quotes the placeholder',
+    is_wp_error($chr_roll_ph_err)
+        && strpos($chr_roll_ph_err->get_error_message(), 'aim') !== false
+        && strpos($chr_roll_ph_err->get_error_message(), 'col') !== false
+);
+
+// "when" (2026-07-25 §4b): a roll a character only sometimes has — the PbtA
+// move that changes another move. Checked at save through the same fence as a
+// placeholder, with one deliberate difference: a `when` is a BOOLEAN test, so
+// it may reference ANY formula-referencable type, not just the numerics a
+// placeholder is restricted to.
+$chr_roll_when = function ($when, array $extra_properties = []) use ($chr_roll_tpl) {
+    return chronicler_sheets_parse_template($chr_roll_tpl(
+        [['id' => 'aim', 'label' => 'Aim', 'when' => $when, 'dice' => '2d6 + {cool}']],
+        $extra_properties
+    ));
+};
+$chr_when_ok = $chr_roll_when('moves["the_big_entrance"]');
+check('a roll may declare a when', is_array($chr_when_ok), $chr_why($chr_when_ok));
+check(
+    'the when is normalized onto the roll',
+    is_array($chr_when_ok) && $chr_when_ok['rolls']['aim']['when'] === 'moves["the_big_entrance"]'
+);
+check(
+    'a roll with no when carries when => null',
+    is_array($chr_rolls)
+        && array_key_exists('when', $chr_rolls['rolls']['act_under_pressure'])
+        && $chr_rolls['rolls']['act_under_pressure']['when'] === null
+);
+$chr_when_select = $chr_roll_when('kind == "a" and not moves["crime_pays"]', [
+    ['id' => 'kind', 'label' => 'Kind', 'type' => 'select', 'options' => [['id' => 'a', 'label' => 'A']]],
+]);
+check('a when may test a select and a checklist — it is not adding numbers', is_array($chr_when_select), $chr_why($chr_when_select));
+check('a when may compare numbers', is_array($chr_roll_when('cool > 1')), $chr_why($chr_roll_when('cool > 1')));
+check('a when naming an undeclared property is a save error', is_wp_error($chr_roll_when('braces')));
+$chr_when_err = $chr_roll_when('braces');
+check(
+    'the when error names the roll and quotes the expression',
+    is_wp_error($chr_when_err)
+        && strpos($chr_when_err->get_error_message(), 'aim') !== false
+        && strpos($chr_when_err->get_error_message(), 'braces') !== false
+);
+check('a when with a syntax error is a save error', is_wp_error($chr_roll_when('cool >')));
+check('a bare checklist reference in a when is a save error', is_wp_error($chr_roll_when('moves')));
+check('a when naming a list property is a save error', is_wp_error($chr_roll_when('gear', [
+    ['id' => 'gear', 'label' => 'Gear', 'type' => 'list', 'fields' => [['id' => 'name', 'label' => 'Name', 'type' => 'text']]],
+])));
+check('an empty when is a save error', is_wp_error($chr_roll_when('')));
+check('a non-string when is a save error', is_wp_error($chr_roll_when(true)));
+
+// A stored template must keep RENDERING whatever a later rule says about it:
+// a broken roll drops out, the rest of the sheet is untouched.
+$chr_roll_lenient = chronicler_sheets_parse_template($chr_roll_tpl([
+    ['id' => 'aim', 'label' => 'Aim', 'dice' => '2x6'],
+    // A when nobody can evaluate is the same kind of broken as dice nobody can
+    // roll, and it fails CLOSED on the read path: the roll drops out.
+    ['id' => 'duck', 'label' => 'Duck', 'when' => 'nonesuch', 'dice' => '2d6'],
+    ['id' => 'shoot', 'label' => 'Shoot', 'dice' => '2d6 + {cool}'],
+    ['id' => 'shoot', 'label' => 'Shoot Twice', 'dice' => '2d6'],
+]), true);
+check('a lenient read survives an unrollable roll', is_array($chr_roll_lenient), $chr_why($chr_roll_lenient));
+check('the lenient read keeps the rolls that do parse', is_array($chr_roll_lenient) && array_keys($chr_roll_lenient['rolls']) === ['shoot']);
+check('the lenient read drops a roll whose when cannot be checked', is_array($chr_roll_lenient) && !isset($chr_roll_lenient['rolls']['duck']));
+check('the lenient read keeps the first of two rolls sharing an id', is_array($chr_roll_lenient) && $chr_roll_lenient['rolls']['shoot']['label'] === 'Shoot');
+check('an empty rolls list parses to an empty table', ($x = chronicler_sheets_parse_template($chr_roll_tpl([]))) && is_array($x) && $x['rolls'] === []);
+$chr_rolls_scalar = json_encode(array_merge(json_decode($motw, true), ['rolls' => 'nope']));
+check('a non-list rolls key is a save error', is_wp_error(chronicler_sheets_parse_template($chr_rolls_scalar)));
+check(
+    'a lenient read of a non-list rolls key drops it',
+    ($x = chronicler_sheets_parse_template($chr_rolls_scalar, true)) && is_array($x) && $x['rolls'] === []
+);

@@ -13,6 +13,7 @@ import {
   FORMULA_FUNCTIONS,
   FORMULA_REF_TYPES,
   formulaParts,
+  hasFormulaParts,
 } from "./formulaLang";
 import { renderMarkdown } from "./markdown-lite";
 import { ENTRY_REF_TYPES } from "./templateLint";
@@ -76,14 +77,16 @@ const formulaOptions = (declared: DeclaredProperty[]): Completion[] => {
       continue;
     }
     const doc = `**${property.label}** — ${property.type}`;
-    if (property.type === "track" || property.type === "counter") {
+    if (hasFormulaParts(property.type)) {
       for (const part of formulaParts(property)) {
         options.push({
           label: `${property.id}["${part}"]`,
           type: "variable",
           boost: 1,
           info: docInfo(
-            `${doc}. The ${part === "max" ? "highest possible" : "current"} value.`,
+            property.type === "checklist"
+              ? `${doc}. 1 when "${part}" is checked, 0 when it isn't.`
+              : `${doc}. The ${part === "max" ? "highest possible" : "current"} value.`,
           ),
         });
       }

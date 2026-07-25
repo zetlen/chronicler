@@ -113,24 +113,58 @@ function chronicler_sheets_rest_context(int $post_id) {
     return [$post, $template];
 }
 
-function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
-    $context = chronicler_sheets_rest_context((int) $request['id']);
-    if (is_wp_error($context)) {
-        return $context;
-    }
-    [$post, $template] = $context;
-    // The endpoint is public-read, but only for published characters: a draft,
-    // pending, private, or trashed sheet is visible solely to someone who can
-    // edit it. Everyone else gets the same 404 as a missing character, so an
-    // unpublished sheet's existence stays hidden.
-    if ($post->post_status !== 'publish' && !current_user_can('edit_post', $post->ID)) {
-        return new WP_Error('chronicler_not_found', 'No such character.', ['status' => 404]);
-    }
-    // A password-protected sheet (#158) is gated the same way: the caller
-    // either presents core's password cookie (REST callers normally won't) or
-    // can edit the character. Same 404, so existence stays hidden here too.
-    if (post_password_required($post) && !current_user_can('edit_post', $post->ID)) {
-        return new WP_Error('chronicler_not_found', 'No such character.', ['status' => 404]);
+/**
+ * One property's serialized entry: the template definition, plus the
+ * character's current value, its human-readable display string, and the
+ * annotation for what the property does.
+ *
+ * `detail` is assigned rather than unioned in because a template may declare
+ * its own default — and `+` keeps the LEFT operand's key, which would serve
+ * the system default while silently discarding the character's chr_detail_
+ * override (playbooks amend what a rating rolls).
+ */
+function chronicler_sheets_serialize_property(int $post_id, array $property, $value): array {
+    $entry = $property + [
+        'value' => $value,
+        'display' => chronicler_sheets_display_value($property, $value),
+    ];
+    $entry['detail'] = chronicler_sheets_get_detail($post_id, $property);
+    return $entry;
+}
+
+/**
+ * A character's sheet as ONE viewer — the current WordPress user — is allowed
+ * to see it. This is the ONLY sanctioned way to read a sheet for an audience.
+ *
+ * chronicler_sheets_get_value() performs no capability checks at all: it hands
+ * back gm_only and owner_only values to anybody who asks, by design, because
+ * filtering is the reading surface's job. A surface that forgets is a surface
+ * that leaks GM secrets, so surfaces do not each write their own filter loop
+ * — they call this. The Slack bot (`/game my`, `/game roll`) depends on it in
+ * particular: bot handlers run logged-out unless the handler resolves the
+ * caller to a WP user first, and this function is what makes that resolution
+ * mean anything.
+ *
+ * Returns the documented Sheet shape (openapi.yaml): characterId, title,
+ * canEdit, system, layout, properties — each property the full template
+ * definition plus its `value`, its human-readable `display`, and the resolved
+ * per-character `detail` annotation. gm_only, owner_only, the NPC withhold,
+ * and the per-PC opinion-set authority are all applied; a property outside
+ * the viewer's audience loses its layout entry too, so its very existence
+ * stays hidden. Null when the character has no template — never a partial
+ * sheet a caller could mistake for an empty one.
+ *
+ * It deliberately does NOT gate on post status or password. Those decide
+ * whether the caller may ask about this character at all — a different
+ * question from what they may see of it — and they answer with a 404, which
+ * only an HTTP surface can serve; they stay in
+ * chronicler_sheets_rest_get_sheet(). Every other caller owes its own
+ * reachability rule before calling this.
+ */
+function chronicler_sheets_sheet_for_viewer(int $post_id): ?array {
+    $template = chronicler_sheets_template_for_character($post_id);
+    if ($template === null) {
+        return null;
     }
     // GM-only properties are withheld from callers who can't edit characters
     // they don't own — the game-master capability, mirroring the front-end
@@ -141,12 +175,12 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
     // and gets the sheet whole; the author keeps their owner-only properties
     // but still loses gm_only ones.
     $is_gm = current_user_can('edit_others_chr_characters');
-    $can_edit = current_user_can('edit_post', $post->ID);
+    $can_edit = current_user_can('edit_post', $post_id);
     // An NPC (#176) withholds its whole stat block from callers who can't
     // edit it, mirroring the front-end render — hiding the markup on the
     // page would be theater if this public-read endpoint still served the
     // values. Editors get the sheet as usual.
-    $is_npc = chronicler_sheets_is_npc($post->ID);
+    $is_npc = chronicler_sheets_is_npc($post_id);
     $properties = [];
     foreach ($template['properties'] as $id => $property) {
         if (!$is_gm && chronicler_sheets_is_gm_only($property)) {
@@ -162,7 +196,7 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
         // each set and carries the caller's per-PC write right. Exempt from
         // the NPC withhold below: NPC pages are where opinions live.
         if ($property['type'] === 'opinions') {
-            $sets = chronicler_sheets_visible_opinion_sets($post->ID, $property);
+            $sets = chronicler_sheets_visible_opinion_sets($post_id, $property);
             if ($sets === null || $sets === []) {
                 continue;
             }
@@ -172,21 +206,19 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
                 $value[$set['pc']] = $set['value'];
                 $pcs[] = ['id' => $set['pc'], 'name' => $set['name'], 'canEdit' => $set['canEdit']];
             }
-            $properties[] = $property + [
-                'value' => $value,
+            $properties[] = chronicler_sheets_serialize_property($post_id, $property, $value) + [
                 'pcs' => $pcs,
-                'display' => chronicler_sheets_display_value($property, $value),
             ];
             continue;
         }
         if ($is_npc && !$can_edit) {
             continue;
         }
-        $value = chronicler_sheets_get_value($post->ID, $property);
-        $properties[] = $property + [
-            'value' => $value,
-            'display' => chronicler_sheets_display_value($property, $value),
-        ];
+        $properties[] = chronicler_sheets_serialize_property(
+            $post_id,
+            $property,
+            chronicler_sheets_get_value($post_id, $property)
+        );
     }
     // The layout must agree with the property list — a withheld property's
     // ID stays hidden too, not just its value. Two gates diverge from
@@ -214,13 +246,48 @@ function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
         }
     }
     return [
-        'characterId' => $post->ID,
-        'title' => get_the_title($post),
+        'characterId' => $post_id,
+        'title' => get_the_title($post_id),
         'canEdit' => $can_edit,
         'system' => $template['system'],
         'layout' => $layout,
         'properties' => $properties,
     ];
+}
+
+/**
+ * The HTTP wrapper around chronicler_sheets_sheet_for_viewer(): reachability
+ * (does this caller get to ask about this character at all?) lives here, and
+ * audience filtering lives there. Deliberately thin — a second filter loop in
+ * this handler is exactly the duplication the authority exists to prevent.
+ */
+function chronicler_sheets_rest_get_sheet(WP_REST_Request $request) {
+    $context = chronicler_sheets_rest_context((int) $request['id']);
+    if (is_wp_error($context)) {
+        return $context;
+    }
+    // The template comes back with the post here only so a character without
+    // one 404s before the status checks, exactly as it always has; the sheet
+    // itself is resolved by the authority below, which takes an id.
+    [$post] = $context;
+    // The endpoint is public-read, but only for published characters: a draft,
+    // pending, private, or trashed sheet is visible solely to someone who can
+    // edit it. Everyone else gets the same 404 as a missing character, so an
+    // unpublished sheet's existence stays hidden.
+    if ($post->post_status !== 'publish' && !current_user_can('edit_post', $post->ID)) {
+        return new WP_Error('chronicler_not_found', 'No such character.', ['status' => 404]);
+    }
+    // A password-protected sheet (#158) is gated the same way: the caller
+    // either presents core's password cookie (REST callers normally won't) or
+    // can edit the character. Same 404, so existence stays hidden here too.
+    if (post_password_required($post) && !current_user_can('edit_post', $post->ID)) {
+        return new WP_Error('chronicler_not_found', 'No such character.', ['status' => 404]);
+    }
+    $sheet = chronicler_sheets_sheet_for_viewer($post->ID);
+    if ($sheet === null) {
+        return new WP_Error('chronicler_no_template', 'No sheet template is configured.', ['status' => 404]);
+    }
+    return $sheet;
 }
 
 function chronicler_sheets_rest_update_property(WP_REST_Request $request) {

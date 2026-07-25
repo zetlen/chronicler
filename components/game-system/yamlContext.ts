@@ -6,7 +6,7 @@ import type { EditorState } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 import { isMap, isSeq, parseDocument } from "yaml";
 import type { Node, YAMLMap, YAMLSeq } from "yaml";
-import { hasNonNullKey, mapGet, seqItems, stringOf } from "./yamlNodes";
+import { hasNonNullKey, mapGet, optionIds, seqItems, stringOf } from "./yamlNodes";
 
 export interface ValueContext {
   /**
@@ -74,6 +74,8 @@ export interface DeclaredProperty {
   type: string;
   /** Whether a counter declares max (its ["max"] part exists only then). */
   hasMax: boolean;
+  /** Option ids, for select and checklist — a checklist's formula parts. */
+  options: string[];
   /** Document offsets of the property's map node. */
   range: [number, number];
   fields: DeclaredField[];
@@ -152,6 +154,7 @@ export function templateOutline(text: string): TemplateOutline {
       label: stringOf(mapGet(property, "label")) ?? id,
       type,
       hasMax: hasNonNullKey(property, "max"),
+      options: optionIds(property),
       range: range ? [range[0], range[1]] : [0, 0],
       fields,
     });

@@ -364,6 +364,11 @@ properties:
       - id: x
         label: X
         type: text
+  - id: moves
+    label: Moves
+    type: checklist
+    options:
+      - { id: nine_lives, label: Nine Lives }
   - id: speed
     label: Speed
     type: number
@@ -389,6 +394,15 @@ properties:
   it("flags a bare track reference and names its parts", () => {
     const msgs = messages(withDerived('"harm + 1"'));
     expect(msgs[0]).toContain('harm["current"]');
+  });
+
+  it("accepts a checklist option reference", () => {
+    expect(lintTemplateSource(withDerived('"moves[\\"nine_lives\\"] + 1"'))).toEqual([]);
+  });
+
+  it("flags a bare checklist reference and names its options", () => {
+    const msgs = messages(withDerived('"moves + 1"'));
+    expect(msgs[0]).toContain('moves["nine_lives"]');
   });
 
   it("flags brackets on a scalar property", () => {

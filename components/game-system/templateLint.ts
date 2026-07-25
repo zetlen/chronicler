@@ -12,6 +12,7 @@ import {
   FORMULA_FUNCTION_NAMES,
   FORMULA_REF_TYPES,
   formulaParts,
+  hasFormulaParts,
   scanFormula,
 } from "./formulaLang";
 import {
@@ -19,6 +20,7 @@ import {
   intOf,
   isTrue,
   mapGet,
+  optionIds,
   rangeOf,
   seqItems,
   stringOf,
@@ -38,6 +40,8 @@ interface PropertyInfo {
   type: string | undefined;
   /** Whether a counter declares max (its ["max"] part exists only then). */
   hasMax: boolean;
+  /** Option ids — a checklist's formula parts. */
+  options: string[];
 }
 
 /** First line of a YAML parse message — the rest is a code frame. */
@@ -109,6 +113,7 @@ export function lintTemplateSource(text: string): TemplateDiagnostic[] {
         declared.set(id, {
           type,
           hasMax: hasNonNullKey(property, "max"),
+          options: optionIds(property),
         });
       }
     }
@@ -359,9 +364,13 @@ function checkFormula(
       );
       continue;
     }
-    const hasParts = info.type === "track" || info.type === "counter";
+    const hasParts = hasFormulaParts(info.type);
     if (hasParts && !ident.bracketed) {
-      const parts = formulaParts({ type: info.type ?? "", hasMax: info.hasMax })
+      const parts = formulaParts({
+        type: info.type ?? "",
+        hasMax: info.hasMax,
+        options: info.options,
+      })
         .map((part) => `${ident.name}["${part}"]`)
         .join(" or ");
       report(`"${ident.name}" is a ${info.type} — reference a part: ${parts}.`);

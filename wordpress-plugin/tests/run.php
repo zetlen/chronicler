@@ -65,9 +65,11 @@ require __DIR__ . '/message-render.test.php';
 
 require __DIR__ . '/../sheets/schema.php';
 require __DIR__ . '/../sheets/formulas.php';
+require __DIR__ . '/../sheets/dice.php';
 require __DIR__ . '/../sheets/names.php';
 require __DIR__ . '/schema.test.php';
 require __DIR__ . '/formulas.test.php';
+require __DIR__ . '/dice.test.php';
 require __DIR__ . '/schema-drift.test.php';
 // template-store.test.php defines the shared get_post_meta/update_post_meta/
 // wp_slash/wp_unslash/WP_Post stubs — it MUST load before render/surfaces so
@@ -76,6 +78,10 @@ require __DIR__ . '/template-store.test.php';
 require __DIR__ . '/render.test.php';
 require __DIR__ . '/index.test.php';
 require __DIR__ . '/surfaces.test.php';
+// After surfaces: sheets-viewer.test.php drives sheets/rest.php, which
+// surfaces.test.php requires (along with the get_post / WP_REST_Request stubs
+// it needs).
+require __DIR__ . '/sheets-viewer.test.php';
 require __DIR__ . '/preflight.test.php';
 require __DIR__ . '/names.test.php';
 
@@ -100,9 +106,14 @@ require __DIR__ . '/settings.test.php';
 require __DIR__ . '/../src/Slack/Signature.php';
 require __DIR__ . '/../src/Slack/Bot/Commands.php';
 require __DIR__ . '/../src/Slack/Bot/Link.php';
+require __DIR__ . '/../src/Slack/Bot/BlockKit.php';
+require __DIR__ . '/../src/Slack/Bot/My.php';
+require __DIR__ . '/../src/Slack/Bot/Roll.php';
 require __DIR__ . '/../src/Slack/Inbound.php';
 require __DIR__ . '/../src/Slack/Deferred.php';
 require __DIR__ . '/slack-inbound.test.php';
+require __DIR__ . '/slack-my.test.php';
+require __DIR__ . '/slack-roll.test.php';
 
 require __DIR__ . '/../src/Slack/ApiError.php';
 require __DIR__ . '/../src/Slack/RateLimited.php';

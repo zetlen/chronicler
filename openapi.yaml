@@ -1224,8 +1224,9 @@ components:
         One template property, verbatim from the parsed Game System
         template (`id`, `label`, `type`, plus whatever the type declares —
         `min`/`max`, `length`, `options`, `fields`, `derived`, `live`,
-        `gm_only`, `owner_only`, ...), with the character's current `value`
-        and its human-readable `display` string merged in. Audience-gated
+        `gm_only`, `owner_only`, ...), with the character's current `value`,
+        its human-readable `display` string, and its resolved `detail`
+        annotation merged in. Audience-gated
         properties never reach callers outside the audience: `gm_only` is
         serialized for game masters only, `owner_only` only for the
         character's author and game masters.
@@ -1236,17 +1237,29 @@ components:
           type: string
         type:
           type: string
-          enum: [number, track, counter, toggle, select, checklist, text, longtext, list]
+          enum: [number, track, counter, toggle, select, checklist, text, longtext, list, opinions]
         value:
           description: The current value; its JSON type depends on `type`.
         display:
           type: string
+        detail:
+          type: string
+          description: |
+            What the property does — the moves a rating rolls, say. The
+            character's own `chr_detail_<id>` override when it has one, else
+            the template's system default, else an empty string.
       additionalProperties: true
 
     LayoutSection:
       type: object
       description: One layout section; `properties` lists property ids in render order. A masthead section renders inside the header card.
       properties:
+        id:
+          type: string
+          description: |
+            The section's machine name. Authored in the template, or derived
+            from the heading when the author left it out ("Moves & Gear" →
+            `moves_gear`). Always present here.
         section:
           type: string
         properties:

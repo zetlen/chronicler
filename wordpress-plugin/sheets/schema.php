@@ -19,6 +19,17 @@ const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 const CHRONICLER_SHEETS_PROPERTY_KEYS = ['id', 'label', 'type', 'live', 'gm_only', 'owner_only', 'always_show', 'detail', 'derived', 'min', 'max', 'start', 'length', 'options', 'fields', 'entry_label'];
 const CHRONICLER_SHEETS_LIST_FIELD_KEYS = ['id', 'label', 'type', 'when', 'min', 'max', 'options'];
 const CHRONICLER_SHEETS_OPTION_KEYS = ['id', 'label'];
+const CHRONICLER_SHEETS_SECTION_KEYS = ['id', 'section', 'properties', 'masthead'];
+const CHRONICLER_SHEETS_ROLL_KEYS = ['id', 'label', 'section', 'when', 'dice', 'detail'];
+/** The whole document's keys — the last allowlist the parser was missing. */
+const CHRONICLER_SHEETS_TOP_KEYS = ['system', 'version', 'properties', 'layout', 'rolls'];
+
+/**
+ * Property types a roll's {…} placeholder may add up. A roll produces a
+ * number, so only properties that ARE numbers can contribute to one — text,
+ * select and the rest have no arithmetic meaning at the table.
+ */
+const CHRONICLER_SHEETS_ROLL_REF_TYPES = ['number', 'track', 'counter'];
 
 /**
  * Decode a template SOURCE (JSON or YAML) into an associative array (#138).
@@ -46,6 +57,20 @@ function chronicler_sheets_decode_template(string $source) {
         return new WP_Error('chronicler_invalid_template', 'Template must be a JSON or YAML object.');
     }
     return $yaml;
+}
+
+/**
+ * A layout section's machine id derived from its heading — the same id/label
+ * split properties use, applied to sections. Lowercase, every run of
+ * non-alphanumerics collapsed to one "_", the result trimmed of "_":
+ * "Moves & Gear" → "moves_gear". Null when what comes out cannot satisfy
+ * CHRONICLER_SHEETS_ID_PATTERN (a heading starting with a digit, one with no
+ * letters at all), which the parser turns into "name this section yourself"
+ * rather than inventing something the author never wrote.
+ */
+function chronicler_sheets_section_id(string $heading): ?string {
+    $id = trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($heading)), '_');
+    return preg_match(CHRONICLER_SHEETS_ID_PATTERN, $id) ? $id : null;
 }
 
 /**
@@ -86,6 +111,15 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
     $data = chronicler_sheets_decode_template($source);
     if (is_wp_error($data)) {
         return $data;
+    }
+    // The document's own keys, allowlisted like every nested spec's are: a
+    // mistyped "rols:" or a stale "rules:" used to save silently and do
+    // nothing, since only template.schema.json ever objected.
+    if (!$lenient) {
+        $err = chronicler_sheets_unknown_key_error($data, CHRONICLER_SHEETS_TOP_KEYS, 'Template');
+        if ($err !== null) {
+            return $err;
+        }
     }
     if (!is_string($data['system'] ?? null) || $data['system'] === '') {
         return new WP_Error('chronicler_invalid_template', '"system" must be a non-empty string.');
@@ -284,10 +318,20 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
 
     $layout = [];
     $seen = [];
+    $section_ids = [];
     foreach (($data['layout'] ?? []) as $i => $section) {
         $where = '"layout" entry ' . ($i + 1);
         if (!is_array($section) || !is_string($section['section'] ?? null) || !is_array($section['properties'] ?? null)) {
             return new WP_Error('chronicler_invalid_template', "$where must be {\"section\": name, \"properties\": [ids]}.");
+        }
+        // Sections had no key allowlist until section ids arrived, so a
+        // typo'd "mastheed: true" saved silently and then did nothing at the
+        // table — the same hazard the property allowlist closed.
+        if (!$lenient) {
+            $err = chronicler_sheets_unknown_key_error($section, CHRONICLER_SHEETS_SECTION_KEYS, $where);
+            if ($err !== null) {
+                return $err;
+            }
         }
         foreach ($section['properties'] as $pid) {
             if (!isset($properties[$pid])) {
@@ -303,11 +347,74 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
         if (isset($section['masthead']) && !is_bool($section['masthead'])) {
             return new WP_Error('chronicler_invalid_template', "$where: \"masthead\" must be true or false.");
         }
+        // The section's machine name: what /game my resolves "stats" against.
+        // Authored id wins, else it derives from the heading. It has to exist
+        // and it has to be unique, because a section nobody can name — or two
+        // sections answering to one name — is a section nobody can ask for.
+        $sid = $section['id'] ?? null;
+        if ($sid !== null && (!is_string($sid) || !preg_match(CHRONICLER_SHEETS_ID_PATTERN, $sid))) {
+            if (!$lenient) {
+                return new WP_Error('chronicler_invalid_template', "$where: \"id\" must be lowercase letters, digits and underscores, starting with a letter.");
+            }
+            $sid = null;
+        }
+        if ($sid === null) {
+            $sid = chronicler_sheets_section_id($section['section']);
+        }
+        if ($sid === null || isset($section_ids[$sid])) {
+            if (!$lenient) {
+                return $sid === null
+                    ? new WP_Error('chronicler_invalid_template', "$where: no id can be derived from the heading \"{$section['section']}\" — give the section an \"id\".")
+                    : new WP_Error('chronicler_invalid_template', "$where: duplicate section id \"$sid\" — give one of the two an explicit \"id\".");
+            }
+            // A template stored before ids existed keeps rendering: a
+            // positional id is addressable, just not memorable.
+            $sid = 'section_' . (count($layout) + 1);
+            while (isset($section_ids[$sid])) {
+                $sid .= '_';
+            }
+        }
+        $section_ids[$sid] = true;
         $layout[] = [
+            'id' => $sid,
             'section' => $section['section'],
             'properties' => array_values($section['properties']),
             'masthead' => (bool) ($section['masthead'] ?? false),
         ];
+    }
+
+    // "rolls" (2026-07-25): the named things a character does — "Act Under
+    // Pressure", "Longsword" — each with its own dice and its own id
+    // namespace, so /game roll resolves a name the same disciplined way
+    // /game my does. Checked HERE, at save, with every property declared:
+    // that is the whole advantage of a declared table over a free-text field,
+    // and it turns a typo'd {col} into an editor error instead of a mystery
+    // at the table.
+    $rolls = [];
+    $declared_rolls = $data['rolls'] ?? [];
+    if (!is_array($declared_rolls)) {
+        if (!$lenient) {
+            return new WP_Error('chronicler_invalid_template', '"rolls" must be a list of rolls.');
+        }
+        $declared_rolls = [];
+    }
+    foreach ($declared_rolls as $i => $roll) {
+        $parsed_roll = chronicler_sheets_parse_roll($roll, $draft, '"rolls" entry ' . ($i + 1), $lenient);
+        if (is_wp_error($parsed_roll)) {
+            if (!$lenient) {
+                return $parsed_roll;
+            }
+            // A roll nobody can roll must not cost the sheet its render (#140):
+            // drop the roll, keep the character.
+            continue;
+        }
+        if (isset($rolls[$parsed_roll['id']])) {
+            if (!$lenient) {
+                return new WP_Error('chronicler_invalid_template', "Duplicate roll id \"{$parsed_roll['id']}\".");
+            }
+            continue;
+        }
+        $rolls[$parsed_roll['id']] = $parsed_roll;
     }
 
     return [
@@ -315,7 +422,116 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
         'version' => $data['version'],
         'properties' => $properties,
         'layout' => $layout,
+        'rolls' => $rolls,
     ];
+}
+
+/**
+ * One `rolls` entry, normalized to
+ * ['id', 'label', 'section'|null, 'when'|null, 'dice', 'detail'|null, 'parsed']
+ * — where 'parsed' is chronicler_sheets_parse_dice()'s term list, so nothing
+ * reparses dice at roll time — or a WP_Error naming the problem. $draft is the
+ * properties-only template the placeholder and `when` fences check against.
+ */
+function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $lenient = false) {
+    if (!is_array($roll)) {
+        return new WP_Error('chronicler_invalid_template', "$where must be an object.");
+    }
+    $id = $roll['id'] ?? null;
+    if (!is_string($id) || !preg_match(CHRONICLER_SHEETS_ID_PATTERN, $id)) {
+        return new WP_Error('chronicler_invalid_template', "$where: \"id\" must match [a-z][a-z0-9_]*.");
+    }
+    if (!$lenient) {
+        $err = chronicler_sheets_unknown_key_error($roll, CHRONICLER_SHEETS_ROLL_KEYS, "Roll \"$id\"");
+        if ($err !== null) {
+            return $err;
+        }
+    }
+    if (!is_string($roll['label'] ?? null) || $roll['label'] === '') {
+        return new WP_Error('chronicler_invalid_template', "Roll \"$id\": \"label\" must be a non-empty string.");
+    }
+    // "section" groups the /game roll listing once a system has more than a
+    // handful. Free text with no id, unlike a layout section: nothing
+    // addresses a roll section, it only orders output.
+    foreach (['section', 'detail'] as $optional) {
+        if (isset($roll[$optional]) && (!is_string($roll[$optional]) || $roll[$optional] === '')) {
+            return new WP_Error('chronicler_invalid_template', "Roll \"$id\": \"$optional\" must be a non-empty string.");
+        }
+    }
+    // "when" (2026-07-25 §4b): the roll exists for a character only while this
+    // holds — the PbtA move that changes another move. Checked here through
+    // exactly the fence a placeholder gets, minus the numeric rule: a `when`
+    // is a boolean test, so playbook == "the_flake" and moves["x"] are both
+    // legitimate, and there is nothing to add to any dice.
+    $when = $roll['when'] ?? null;
+    if ($when !== null) {
+        if (!is_string($when) || trim($when) === '') {
+            return new WP_Error(
+                'chronicler_invalid_template',
+                "Roll \"$id\": \"when\" must be a formula deciding whether this character has the roll, e.g. moves[\"read_about_this\"]."
+            );
+        }
+        $checked = chronicler_sheets_formula_check($when, $draft);
+        if (is_wp_error($checked)) {
+            return new WP_Error('chronicler_invalid_template', "Roll \"$id\": when: $when: " . $checked->get_error_message());
+        }
+    }
+    $dice = $roll['dice'] ?? null;
+    if (!is_string($dice) || trim($dice) === '') {
+        return new WP_Error('chronicler_invalid_template', "Roll \"$id\": \"dice\" must be dice notation, e.g. \"2d6 + {cool}\".");
+    }
+    $parsed = chronicler_sheets_parse_dice($dice);
+    if (is_wp_error($parsed)) {
+        return new WP_Error('chronicler_invalid_template', "Roll \"$id\": " . $parsed->get_error_message());
+    }
+    foreach (chronicler_sheets_dice_placeholders($parsed) as $expression) {
+        $err = chronicler_sheets_check_roll_placeholder($expression, $draft, "Roll \"$id\"");
+        if ($err !== null) {
+            return $err;
+        }
+    }
+    return [
+        'id' => $id,
+        'label' => $roll['label'],
+        'section' => $roll['section'] ?? null,
+        'when' => is_string($when) ? trim($when) : null,
+        'dice' => trim($dice),
+        'detail' => $roll['detail'] ?? null,
+        'parsed' => $parsed,
+    ];
+}
+
+/**
+ * One {…} placeholder from a roll: a real Expression Language expression, run
+ * through exactly the fence, reference check and dry run `derived` uses, plus
+ * the one rule rolls add — what it references must be a number, since the
+ * result is added to dice. Returns WP_Error or null.
+ */
+function chronicler_sheets_check_roll_placeholder(string $expression, array $draft, string $where): ?WP_Error {
+    $checked = chronicler_sheets_formula_check($expression, $draft);
+    if (is_wp_error($checked)) {
+        return new WP_Error('chronicler_invalid_template', "$where: {" . $expression . '}: ' . $checked->get_error_message());
+    }
+    foreach ($checked['refs'] as $ref) {
+        $type = $draft['properties'][$ref]['type'] ?? null;
+        if (!in_array($type, CHRONICLER_SHEETS_ROLL_REF_TYPES, true)) {
+            $is = $type === null ? 'is not a declared property' : "is a $type property";
+            return new WP_Error(
+                'chronicler_invalid_template',
+                "$where: {" . $expression . "}: \"$ref\" $is — a roll can only add numbers ("
+                    . implode(', ', CHRONICLER_SHEETS_ROLL_REF_TYPES) . ').'
+            );
+        }
+    }
+    // The dry run catches what the reference check can't see: an expression
+    // over perfectly numeric properties that still produces something you
+    // can't add to dice, e.g. a comparison. Skipped when default values make
+    // the run itself fail, exactly as derived's dry run is.
+    $dry = chronicler_sheets_formula_evaluate($expression, chronicler_sheets_formula_context($draft, []));
+    if (!is_wp_error($dry) && !is_numeric($dry)) {
+        return new WP_Error('chronicler_invalid_template', "$where: {" . $expression . '}: must produce a number to add to the dice.');
+    }
+    return null;
 }
 
 /** Per-type constraint validation for one property definition. */
@@ -796,7 +1012,7 @@ function chronicler_sheets_layout_sections(array $template): array {
     }, $sections)) : [];
     $rest = array_diff(array_keys($template['properties']), $placed);
     if ($rest) {
-        $sections[] = ['section' => 'Other', 'properties' => array_values($rest), 'masthead' => false];
+        $sections[] = ['id' => 'other', 'section' => 'Other', 'properties' => array_values($rest), 'masthead' => false];
     }
     return $sections;
 }
