@@ -305,9 +305,9 @@ function chronicler_sheets_set_value(int $post_id, array $property, $value): voi
 
 /**
  * The character a Slack user acts on: the character whose own sheet claims
- * that Slack id, else — for links made on the WP profile — their author's
- * chr_active character, else that author's most recent published one. Null
- * when the Slack id is unmapped or sheetless.
+ * that Slack id, else — for links made on the WP profile — the author's
+ * active character per the sheets/active.php authority (#17). Null when the
+ * Slack id is unmapped, the player is sheetless, or the GM opted them out.
  */
 function chronicler_sheets_character_for_slack_id(string $slack_id): ?WP_Post {
     if ($slack_id === '') {
@@ -337,18 +337,8 @@ function chronicler_sheets_character_for_slack_id(string $slack_id): ?WP_Post {
     if (!$users) {
         return null;
     }
-    $base = [
-        'post_type' => 'chr_character',
-        'post_status' => 'publish',
-        'author' => (int) $users[0],
-        'numberposts' => 1,
-    ];
-    $active = get_posts($base + ['meta_key' => 'chr_active', 'meta_value' => '1']);
-    if ($active) {
-        return $active[0];
-    }
-    $any = get_posts($base);
-    return $any ? $any[0] : null;
+    $active = chronicler_sheets_active_character_for((int) $users[0]);
+    return $active === null ? null : (get_post($active) ?: null);
 }
 
 /**

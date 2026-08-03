@@ -289,6 +289,7 @@ function chronicler_sheets_render_active_box(WP_Post $post): void {
     $active = get_post_meta($post->ID, 'chr_active', true) === '1';
     echo '<label><input type="checkbox" name="chr_active" value="1" ' . checked($active, true, false) . '> '
         . 'This player\'s active character</label>';
+    echo '<p class="description">Login and Slack resolve to the active character. Left undecided, the player\'s most recent sheet is picked automatically; unchecking this box opts this sheet out of that auto-pick for good.</p>';
 }
 
 function chronicler_sheets_save_active_box(int $post_id): void {
@@ -309,8 +310,15 @@ function chronicler_sheets_save_active_box(int $post_id): void {
     }
     if (isset($_POST['chr_active'])) {
         update_post_meta($post_id, 'chr_active', '1');
-    } else {
-        delete_post_meta($post_id, 'chr_active');
+        return;
+    }
+    // Tri-state (#17): unchecking the ACTIVE sheet is an explicit demotion —
+    // the '0' tombstone keeps the lazy self-heal (sheets/active.php) from
+    // ever re-picking it. An unchecked box on a sheet that wasn't active is
+    // just an ordinary save; writing '0' there would tombstone every sheet
+    // the GM ever touches, so absent stays absent.
+    if (get_post_meta($post_id, 'chr_active', true) === '1') {
+        update_post_meta($post_id, 'chr_active', '0');
     }
 }
 add_action('save_post_chr_character', 'chronicler_sheets_save_active_box', 9);

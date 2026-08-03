@@ -41,10 +41,10 @@ function chronicler_sheets_user_is_player_shaped($user): bool {
 }
 
 /**
- * login_redirect filter: send a player-shaped login to the most recently
- * modified published character they author (the one-active-character proxy
- * until GitHub #17). Published-only matches the player's own caps and the
- * Slack lookup's rule. No sheet, a failed login (WP_Error), or a deep link
+ * login_redirect filter: send a player-shaped login to their active
+ * character (the sheets/active.php authority, GitHub #17 — healing the flag
+ * on the way when it was never set). No active character — no sheet at all,
+ * or a deliberate GM opt-out — a failed login (WP_Error), and a deep link
  * all keep WordPress's default behavior.
  */
 function chronicler_sheets_login_redirect($redirect_to, $requested_redirect_to, $user) {
@@ -54,19 +54,11 @@ function chronicler_sheets_login_redirect($redirect_to, $requested_redirect_to, 
     if (!chronicler_sheets_is_default_login_target((string) $requested_redirect_to, admin_url())) {
         return $redirect_to;
     }
-    $ids = get_posts([
-        'post_type' => 'chr_character',
-        'post_status' => 'publish',
-        'author' => (int) $user->ID,
-        'numberposts' => 1,
-        'orderby' => 'modified',
-        'order' => 'DESC',
-        'fields' => 'ids',
-    ]);
-    if ($ids === []) {
+    $active = chronicler_sheets_active_character_for((int) $user->ID);
+    if ($active === null) {
         return $redirect_to;
     }
-    return add_query_arg('chr_welcome', '1', get_permalink((int) $ids[0]));
+    return add_query_arg('chr_welcome', '1', get_permalink($active));
 }
 
 // Not during uninstall: uninstall.php loads sheets files for constants only

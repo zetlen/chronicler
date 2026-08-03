@@ -42,10 +42,12 @@ check('an off-site URL is not default-shaped',
 // --- the login_redirect shell -------------------------------------------------
 // admin_url() answers 'https://blog.test/wp-admin/' (slack-inbound stub), so
 // that string is this suite's "default destination".
-function chronicler_login_test_reset(array $caps, array $sheet_ids = []): WP_User {
+function chronicler_login_test_reset(array $caps, array $sheet_ids = [], array $meta = []): WP_User {
     $GLOBALS['chr_test_login_user_caps'] = $caps;
     $GLOBALS['chr_test_get_posts_calls'] = [];
     $GLOBALS['chr_test_index_ids'] = $sheet_ids;
+    $GLOBALS['chr_test_post_meta'] = $meta;
+    $GLOBALS['chr_test_post_meta_writes'] = [];
     return new WP_User(5);
 }
 $dashboard = 'https://blog.test/wp-admin/';
@@ -77,15 +79,18 @@ $user = chronicler_login_test_reset($player_caps, [11]);
 $result = chronicler_sheets_login_redirect($dashboard, '', $user);
 check('a player lands on their sheet permalink with the chr_welcome arg',
     $result === 'http://test.local/?chr=11&chr_welcome=1', "got: $result");
-$query = $GLOBALS['chr_test_get_posts_calls'][0] ?? [];
-check('the sheet query asks for the most recently modified published character',
-    ($query['post_type'] ?? null) === 'chr_character'
-    && ($query['post_status'] ?? null) === 'publish'
-    && ($query['author'] ?? null) === 5
-    && ($query['orderby'] ?? null) === 'modified'
-    && ($query['order'] ?? null) === 'DESC'
-    && ($query['numberposts'] ?? null) === 1
-    && ($query['fields'] ?? null) === 'ids');
+check('the landing goes through the active-character authority (#17): the heal writes the flag',
+    in_array([11, 'chr_active', '1'], $GLOBALS['chr_test_post_meta_writes'], true));
+
+// The active flag, not recency, picks the destination (#17).
+$user = chronicler_login_test_reset($player_caps, [22, 11], [11 => ['chr_active' => '1']]);
+$result = chronicler_sheets_login_redirect($dashboard, '', $user);
+check('the flagged sheet wins over a newer one',
+    $result === 'http://test.local/?chr=11&chr_welcome=1', "got: $result");
+
+$user = chronicler_login_test_reset($player_caps, [11], [11 => ['chr_active' => '0']]);
+check('a player the GM opted out (all sheets tombstoned) keeps the default landing',
+    chronicler_sheets_login_redirect($dashboard, '', $user) === $dashboard);
 
 // --- arrival banner (sheets/render.php) ---------------------------------------
 $banner = chronicler_sheets_render_welcome_banner(true, true);

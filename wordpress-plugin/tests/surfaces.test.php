@@ -417,6 +417,28 @@ check(
     strpos($active_box_pc, 'name="chr_active"') !== false && strpos($active_box_pc, 'disabled') === false
 );
 
+// --- Active tombstone (#17): an explicit uncheck of the active sheet writes
+// '0' (self-heal must never re-pick it); ordinary saves of a never-active
+// sheet write nothing at all. ---
+$_POST['chronicler_active_nonce'] = 'ok';
+unset($_POST['chr_active']);
+$GLOBALS['chr_test_post_meta'][7]['chr_active'] = '1';
+chronicler_sheets_save_active_box(7);
+check('Active save: unchecking the active sheet writes the \'0\' tombstone',
+    ($GLOBALS['chr_test_post_meta'][7]['chr_active'] ?? null) === '0');
+chronicler_sheets_save_active_box(7);
+check('Active save: a tombstoned sheet stays tombstoned',
+    ($GLOBALS['chr_test_post_meta'][7]['chr_active'] ?? null) === '0');
+unset($GLOBALS['chr_test_post_meta'][7]['chr_active']);
+chronicler_sheets_save_active_box(7);
+check('Active save: unchecked with no prior flag writes nothing (no accidental tombstone)',
+    !isset($GLOBALS['chr_test_post_meta'][7]['chr_active']));
+$_POST['chr_active'] = '1';
+chronicler_sheets_save_active_box(7);
+check('Active save: checking still writes \'1\'',
+    ($GLOBALS['chr_test_post_meta'][7]['chr_active'] ?? null) === '1');
+unset($_POST['chronicler_active_nonce'], $_POST['chr_active'], $GLOBALS['chr_test_post_meta'][7]);
+
 // --- Opinions (#183): the REST read pierces the NPC withhold, but each set
 // is a personal notebook — served only to its own player (GMs get all) —
 // and the write route's permission is edit_post on the PLAYER CHARACTER,
