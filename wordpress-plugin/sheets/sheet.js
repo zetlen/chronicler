@@ -235,9 +235,29 @@ export function welcomeCleanUrl(href) {
   return url.toString();
 }
 
+/**
+ * Toast behavior for the arrival notice (GitHub #1): positioned top-center
+ * by sheet.css; dismissed by a click anywhere on it, or on its own after 10
+ * seconds. The exit class drives a 300ms fade (sheet.css) and removal
+ * follows it — the timings must agree.
+ */
+export function initWelcomeToast(el) {
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    el.classList.add("chr-sheet__welcome--out");
+    setTimeout(() => el.remove(), 300);
+  };
+  el.addEventListener("click", dismiss);
+  setTimeout(dismiss, 10000);
+}
+
 if (typeof document !== "undefined") {
   const root = document.querySelector("[data-chronicler-sheet]");
   if (root) initSheet(root);
+  const toast = document.querySelector(".chr-sheet__welcome");
+  if (toast) initWelcomeToast(toast);
   const clean = welcomeCleanUrl(window.location.href);
   if (clean !== null) history.replaceState(null, "", clean);
 }

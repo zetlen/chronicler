@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { nextTrackValue, initSheet, welcomeCleanUrl } from "./sheet.js";
+import { nextTrackValue, initSheet, welcomeCleanUrl, initWelcomeToast } from "./sheet.js";
 
 function sheetDom(boot = { restUrl: "https://blog.test/wp-json/chronicler/v1/", nonce: "n0nce", canEdit: true, characterId: 7 }) {
   document.body.innerHTML = `
@@ -381,5 +381,42 @@ describe("welcomeCleanUrl (GitHub #1)", () => {
   });
   it("answers null when there is nothing to strip", () => {
     expect(welcomeCleanUrl("http://blog.test/characters/riley/")).toBeNull();
+  });
+});
+
+describe("initWelcomeToast (GitHub #1)", () => {
+  function toastDom() {
+    document.body.innerHTML = `<p class="chr-sheet__welcome" role="status">You're logged in</p>`;
+    return document.querySelector(".chr-sheet__welcome") as HTMLElement;
+  }
+  it("dismisses on click (fade class, then removal)", () => {
+    vi.useFakeTimers();
+    const el = toastDom();
+    initWelcomeToast(el);
+    el.click();
+    expect(el.classList.contains("chr-sheet__welcome--out")).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(document.querySelector(".chr-sheet__welcome")).toBeNull();
+    vi.useRealTimers();
+  });
+  it("auto-dismisses after 10 seconds", () => {
+    vi.useFakeTimers();
+    const el = toastDom();
+    initWelcomeToast(el);
+    vi.advanceTimersByTime(9999);
+    expect(document.querySelector(".chr-sheet__welcome")).not.toBeNull();
+    vi.advanceTimersByTime(1 + 300);
+    expect(document.querySelector(".chr-sheet__welcome")).toBeNull();
+    vi.useRealTimers();
+  });
+  it("a click during the fade doesn't double-dismiss", () => {
+    vi.useFakeTimers();
+    const el = toastDom();
+    initWelcomeToast(el);
+    el.click();
+    el.click();
+    vi.advanceTimersByTime(300);
+    expect(document.querySelector(".chr-sheet__welcome")).toBeNull();
+    vi.useRealTimers();
   });
 });

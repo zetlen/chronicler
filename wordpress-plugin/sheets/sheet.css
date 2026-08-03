@@ -290,12 +290,52 @@
   padding: 0.5rem 1rem;
 }
 /* One-time arrival notice (GitHub #1): the login redirect's chr_welcome
-   landing, editor-eyes only (render.php drops it for everyone else). */
+   landing, editor-eyes only (render.php drops it for everyone else). A
+   top-center toast; sheet.js dismisses it on click or after 10 seconds by
+   adding --out (fade timing there and here must agree: 300ms). */
 .chr-sheet__welcome {
-  background: rgba(153, 117, 0, 0.05);
-  border-left: 4px solid var(--chr-accent);
-  padding: 0.5rem 1rem;
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999; /* above the sheet, below the admin bar's 99999 */
+  max-width: min(90vw, 30rem);
+  margin: 0;
+  background: #fffdf7;
+  border: 1px solid var(--chr-border, #d0c8b8);
+  border-left: 4px solid var(--chr-accent, #997500);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 0.75rem 1.25rem;
   font-weight: 600;
+  cursor: pointer;
+  animation: chr-toast-in 300ms ease-out;
+  transition: opacity 300ms ease-out;
+}
+/* The wp-admin bar is fixed to the top for logged-in viewers — which the
+   toast's audience always is. 32px tall, 46px at core's mobile breakpoint. */
+.admin-bar .chr-sheet__welcome {
+  top: calc(1rem + 32px);
+}
+@media screen and (max-width: 782px) {
+  .admin-bar .chr-sheet__welcome {
+    top: calc(1rem + 46px);
+  }
+}
+.chr-sheet__welcome--out {
+  opacity: 0;
+}
+@keyframes chr-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -0.5rem);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chr-sheet__welcome {
+    animation: none;
+    transition: none;
+  }
 }
 .chr-sheet button:disabled,
 .chr-sheet input:disabled,

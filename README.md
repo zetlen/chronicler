@@ -61,8 +61,8 @@ The bot must be **a member of any channel** you want to read
 ## Development
 
 Needs **Node ≥ 22.18** (the build imports `.ts` from `.mjs` and relies on
-Node's native TypeScript type-stripping; `.node-version` pins the exact
-runtime for fnm/asdf/nodenv). Copy `.env.example` to `.env` for the optional
+Node's native TypeScript type-stripping; `.node_version` pins the exact
+runtime for mise). Copy `.env.example` to `.env` for the optional
 deploy and verify knobs.
 
 ```bash
