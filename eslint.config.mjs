@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     // Agent worktrees: full repo copies, linted (or not) in their own
     // checkouts. Gitignored, but flat config doesn't read .gitignore.
     ".claude/worktrees/**",
+    // Memory-plugin scratch space: not project code, same .gitignore caveat.
+    ".remember/**",
   ]),
   js.configs.recommended,
   ...tseslint.configs.recommended,

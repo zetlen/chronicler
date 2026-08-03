@@ -130,6 +130,9 @@ require __DIR__ . '/caps.test.php';
 // After caps: uninstall.test.php reuses its WP_Role stub (remove_cap) and the
 // role registry, and drives uninstall.php with WP_UNINSTALL_PLUGIN defined.
 require __DIR__ . '/uninstall.test.php';
+// After uninstall (which defines WP_UNINSTALL_PLUGIN): login.test.php calls
+// the sheets/login.php functions directly, so the skipped hook block is fine.
+require __DIR__ . '/login.test.php';
 
 $n = $GLOBALS['chronicler_test_count'];
 $f = $GLOBALS['chronicler_test_failures'];

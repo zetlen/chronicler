@@ -221,7 +221,23 @@ export function initSheet(root, fetchImpl = fetch) {
   window.addEventListener("pagehide", flushPending);
 }
 
+/**
+ * The address-bar URL with the login landing's one-time chr_welcome arg
+ * removed, or null when there is nothing to strip (GitHub #1). The banner
+ * stays up for the pageview being read; replacing the URL is what makes
+ * "one-time" true — a reload or bookmark gets the clean permalink, not a
+ * resurrected banner.
+ */
+export function welcomeCleanUrl(href) {
+  const url = new URL(href);
+  if (!url.searchParams.has("chr_welcome")) return null;
+  url.searchParams.delete("chr_welcome");
+  return url.toString();
+}
+
 if (typeof document !== "undefined") {
   const root = document.querySelector("[data-chronicler-sheet]");
   if (root) initSheet(root);
+  const clean = welcomeCleanUrl(window.location.href);
+  if (clean !== null) history.replaceState(null, "", clean);
 }

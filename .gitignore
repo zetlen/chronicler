@@ -11,6 +11,8 @@
 
 # agent worktrees (session-local checkouts; .claude/skills stays tracked)
 /.claude/worktrees/
+# memory-plugin scratch space (also carries its own catch-all .gitignore)
+/.remember/
 
 # misc
 .DS_Store

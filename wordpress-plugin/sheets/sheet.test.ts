@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { nextTrackValue, initSheet } from "./sheet.js";
+import { nextTrackValue, initSheet, welcomeCleanUrl } from "./sheet.js";
 
 function sheetDom(boot = { restUrl: "https://blog.test/wp-json/chronicler/v1/", nonce: "n0nce", canEdit: true, characterId: 7 }) {
   document.body.innerHTML = `
@@ -365,5 +365,21 @@ describe("initSheet — opinions (#183)", () => {
     expect(
       root.querySelectorAll('[data-pc="22"] .chr-track__box[data-marked="1"]').length,
     ).toBe(1);
+  });
+});
+
+describe("welcomeCleanUrl (GitHub #1)", () => {
+  it("strips the one-time chr_welcome arg so reloads don't resurrect the banner", () => {
+    expect(welcomeCleanUrl("http://blog.test/characters/riley/?chr_welcome=1")).toBe(
+      "http://blog.test/characters/riley/",
+    );
+  });
+  it("keeps unrelated params and the fragment", () => {
+    expect(welcomeCleanUrl("http://blog.test/characters/riley/?a=1&chr_welcome=1#gear")).toBe(
+      "http://blog.test/characters/riley/?a=1#gear",
+    );
+  });
+  it("answers null when there is nothing to strip", () => {
+    expect(welcomeCleanUrl("http://blog.test/characters/riley/")).toBeNull();
   });
 });

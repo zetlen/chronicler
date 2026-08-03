@@ -169,6 +169,20 @@ function chronicler_sheets_visible_opinion_sets(int $post_id, array $property): 
     return $sets;
 }
 
+/**
+ * The one-time arrival notice (GitHub #1): login_redirect lands a player here
+ * with chr_welcome=1; render it only for a viewer who can edit this
+ * character, so a pasted or bookmarked URL with the arg shows nothing to
+ * anyone else. No dismiss button — the next navigation is the clean
+ * permalink and the banner is gone.
+ */
+function chronicler_sheets_render_welcome_banner(bool $requested, bool $can_edit): string {
+    if (!$requested || !$can_edit) {
+        return '';
+    }
+    return '<p class="chr-sheet__welcome" role="status">You’re logged in — this is your character sheet.</p>';
+}
+
 function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): string {
     $template = chronicler_sheets_template_for_character($post_id);
     if ($template === null) {
@@ -281,6 +295,7 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
     $html = '<article class="chr-sheet' . $wide . $npc_class . '" data-chronicler-sheet>';
     $html .= '<script type="application/json" id="chronicler-sheet-boot">' . wp_json_encode($boot) . '</script>';
     $html .= '<div class="chr-sheet__error" hidden></div>';
+    $html .= chronicler_sheets_render_welcome_banner(isset($_GET['chr_welcome']), $can_edit);
     $html .= chronicler_sheets_render_masthead($post_id, $trait_props);
     // Tell the editor why their page looks different from everyone else's —
     // without this, stats that render fine for the GM but vanish for players

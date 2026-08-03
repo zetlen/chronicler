@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.28.1
+Stable tag: 4.29.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.29.0 =
+* Players land on their character sheet after logging in, with a one-time arrival notice. GMs, admins, and links to specific pages keep their normal destinations.
 
 = 4.28.1 =
 * Documentation: the Game System editor's help text for a dice field on a list now explains entry references — {entry["…"]} reaches the entry's own fields, like a weapon adding its own harm rating — and notes that an unresolvable reference errors clearly at roll time.

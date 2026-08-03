@@ -289,6 +289,14 @@
   border-left: 4px solid var(--chr-accent);
   padding: 0.5rem 1rem;
 }
+/* One-time arrival notice (GitHub #1): the login redirect's chr_welcome
+   landing, editor-eyes only (render.php drops it for everyone else). */
+.chr-sheet__welcome {
+  background: rgba(153, 117, 0, 0.05);
+  border-left: 4px solid var(--chr-accent);
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+}
 .chr-sheet button:disabled,
 .chr-sheet input:disabled,
 .chr-sheet select:disabled,
