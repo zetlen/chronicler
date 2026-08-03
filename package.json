@@ -15,7 +15,8 @@
     "check:version": "node scripts/check-version.mjs",
     "sync:github": "node scripts/sync-github.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
-    "bump": "node scripts/bump-version.mjs"
+    "bump": "node scripts/bump-version.mjs",
+    "sandbox": "node scripts/sandbox.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
