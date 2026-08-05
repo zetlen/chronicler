@@ -75,6 +75,12 @@ require __DIR__ . '/schema-drift.test.php';
 // wp_slash/wp_unslash/WP_Post stubs — it MUST load before render/surfaces so
 // its registry-backed versions win those suites' function_exists guards.
 require __DIR__ . '/template-store.test.php';
+// After template-store.test.php: effects-store.test.php reuses those meta
+// stubs, and leaves the shared globals clean for render/surfaces below.
+require __DIR__ . '/effects-store.test.php';
+// effects-eval.test.php is pure (instances in, terms out) and only needs
+// effects.php loaded, which the store suite above does.
+require __DIR__ . '/effects-eval.test.php';
 require __DIR__ . '/render.test.php';
 require __DIR__ . '/index.test.php';
 require __DIR__ . '/surfaces.test.php';
@@ -109,11 +115,15 @@ require __DIR__ . '/../src/Slack/Bot/Link.php';
 require __DIR__ . '/../src/Slack/Bot/BlockKit.php';
 require __DIR__ . '/../src/Slack/Bot/My.php';
 require __DIR__ . '/../src/Slack/Bot/Roll.php';
+require __DIR__ . '/../src/Slack/Bot/Effect.php';
 require __DIR__ . '/../src/Slack/Inbound.php';
 require __DIR__ . '/../src/Slack/Deferred.php';
 require __DIR__ . '/slack-inbound.test.php';
 require __DIR__ . '/slack-my.test.php';
 require __DIR__ . '/slack-roll.test.php';
+// After slack-my: slack-effect.test.php drives the same Slack-id lookup stub,
+// and writes through template-store.test.php's meta registry.
+require __DIR__ . '/slack-effect.test.php';
 
 require __DIR__ . '/../src/Slack/ApiError.php';
 require __DIR__ . '/../src/Slack/RateLimited.php';

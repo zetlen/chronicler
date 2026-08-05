@@ -1,0 +1,12 @@
+# An effect's modifier is a whole number or a formula string. true is neither,
+# and both authorities say so — the schema by type, PHP by name.
+system: Bad Modifier
+version: 1
+properties:
+  - id: cool
+    label: Cool
+    type: number
+effects:
+  - id: forward
+    label: Forward
+    modifier: true

@@ -18,7 +18,7 @@ features:
     - command: /game
       url: "{{REST_BASE}}/slack/inbound/commands"
       description: Campaign tools — sheets, dice, session clipping
-      usage_hint: "my <thing> | roll <name> | link <character> | help"
+      usage_hint: "my <thing> | roll <name> | effect <character> | link <character> | help"
       should_escape: false
   shortcuts:
     - name: "Clip: session start"

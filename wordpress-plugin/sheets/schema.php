@@ -7,7 +7,7 @@ if (!defined('ABSPATH') && !defined('CHRONICLER_TESTS')) {
     exit;
 }
 
-const CHRONICLER_SHEETS_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text', 'longtext', 'list', 'opinions'];
+const CHRONICLER_SHEETS_TYPES = ['number', 'track', 'counter', 'toggle', 'select', 'checklist', 'text', 'longtext', 'list', 'opinions', 'dice'];
 const CHRONICLER_SHEETS_LIST_FIELD_TYPES = ['text', 'longtext', 'number', 'toggle', 'select', 'dice'];
 const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 
@@ -16,13 +16,23 @@ const CHRONICLER_SHEETS_ID_PATTERN = '/^[a-z][a-z0-9_]*$/';
 // together). The write path rejects anything else: an unrecognized key is
 // most dangerous when it's a typo'd audience flag, which used to save
 // silently and publish the very value it meant to hide.
-const CHRONICLER_SHEETS_PROPERTY_KEYS = ['id', 'label', 'type', 'live', 'gm_only', 'owner_only', 'always_show', 'detail', 'derived', 'min', 'max', 'start', 'length', 'options', 'fields', 'entry_label', 'label_field'];
-const CHRONICLER_SHEETS_LIST_FIELD_KEYS = ['id', 'label', 'type', 'when', 'min', 'max', 'options'];
+const CHRONICLER_SHEETS_PROPERTY_KEYS = ['id', 'label', 'type', 'live', 'gm_only', 'owner_only', 'always_show', 'detail', 'derived', 'min', 'max', 'start', 'length', 'options', 'fields', 'entry_label', 'label_field', 'traits'];
+const CHRONICLER_SHEETS_LIST_FIELD_KEYS = ['id', 'label', 'type', 'when', 'min', 'max', 'options', 'traits'];
 const CHRONICLER_SHEETS_OPTION_KEYS = ['id', 'label'];
 const CHRONICLER_SHEETS_SECTION_KEYS = ['id', 'section', 'properties', 'masthead'];
-const CHRONICLER_SHEETS_ROLL_KEYS = ['id', 'label', 'section', 'dice', 'detail'];
+const CHRONICLER_SHEETS_ROLL_KEYS = ['id', 'label', 'section', 'dice', 'detail', 'traits'];
+const CHRONICLER_SHEETS_EFFECT_KEYS = ['id', 'label', 'detail', 'modifier', 'applies_to', 'cap'];
+
+/**
+ * The names a roll answers to at evaluation time — its own keys plus `uses`
+ * (the property ids its dice reach). A roll's author-defined `traits` are
+ * flattened in alongside them, so a trait by one of these names would shadow
+ * the real thing silently: the validator refuses it instead
+ * (chronicler_sheets_validate_traits).
+ */
+const CHRONICLER_SHEETS_RESERVED_ROLL_KEYS = ['id', 'label', 'section', 'dice', 'detail', 'uses', 'traits'];
 /** The whole document's keys — the last allowlist the parser was missing. */
-const CHRONICLER_SHEETS_TOP_KEYS = ['system', 'version', 'properties', 'layout', 'rolls'];
+const CHRONICLER_SHEETS_TOP_KEYS = ['system', 'version', 'properties', 'layout', 'rolls', 'effects'];
 
 /**
  * Property types a roll's {…} placeholder may add up. A roll produces a
@@ -96,6 +106,68 @@ function chronicler_sheets_unknown_key_error(array $spec, array $known, string $
         return new WP_Error('chronicler_invalid_template', "$where: unknown key \"$key\".$hint");
     }
     return null;
+}
+
+/**
+ * A `traits` map — the semi-open corner of an otherwise closed roll object.
+ * Authors label what a roll IS ("save: dexterity", "check: true") so effects
+ * can target a category, without every system's vocabulary having to become a
+ * core key. Names follow the property id pattern and values are scalars, since
+ * an effect expression only ever compares them. Two refusals earn their keep:
+ * a name outside the pattern is unreachable from an expression, and a name
+ * that shadows a reserved roll key (CHRONICLER_SHEETS_RESERVED_ROLL_KEYS)
+ * would quietly outrank the real one at evaluation time. Returns WP_Error
+ * naming the offending trait, or null. $where prefixes the message.
+ */
+function chronicler_sheets_validate_traits($traits, string $where): ?WP_Error {
+    if (!is_array($traits)) {
+        return new WP_Error('chronicler_invalid_template', "$where: \"traits\" must be a map of names to values, e.g. {save: dexterity}.");
+    }
+    foreach ($traits as $key => $value) {
+        if (!is_string($key) || !preg_match(CHRONICLER_SHEETS_ID_PATTERN, $key)) {
+            return new WP_Error('chronicler_invalid_template', "$where: trait \"$key\" must match [a-z][a-z0-9_]*.");
+        }
+        if (in_array($key, CHRONICLER_SHEETS_RESERVED_ROLL_KEYS, true)) {
+            return new WP_Error('chronicler_invalid_template', "$where: trait \"$key\" is one of a roll's own names — call it something else.");
+        }
+        if (!is_string($value) && !is_int($value) && !is_bool($value)) {
+            return new WP_Error('chronicler_invalid_template', "$where: trait \"$key\" must be text, a whole number or true/false.");
+        }
+    }
+    return null;
+}
+
+/**
+ * Every trait name declared anywhere in a template — on a roll, on a dice
+ * property, on a dice list field — as one flat, deduplicated list.
+ *
+ * This union is what an effect expression may ask a roll about. It exists
+ * because targeting is written once and evaluated against every roll: an
+ * effect keyed on `save` must be answerable on a roll that has no `save`, so
+ * the roll context null-fills the whole union and the fence checks names
+ * against it. Declared somewhere means askable everywhere; declared nowhere
+ * is a typo. Junk names are skipped rather than refused — the write path
+ * already refused them, and a lenient read must not fail here.
+ */
+function chronicler_sheets_template_traits(array $template): array {
+    $keys = [];
+    $collect = function ($traits) use (&$keys): void {
+        foreach ((array) $traits as $key => $value) {
+            if (is_string($key) && preg_match(CHRONICLER_SHEETS_ID_PATTERN, $key)) {
+                $keys[$key] = true;
+            }
+        }
+    };
+    foreach (($template['properties'] ?? []) as $property) {
+        $collect($property['traits'] ?? []);
+        foreach ((array) ($property['fields'] ?? []) as $field) {
+            $collect(is_array($field) ? ($field['traits'] ?? []) : []);
+        }
+    }
+    foreach (($template['rolls'] ?? []) as $roll) {
+        $collect(is_array($roll) ? ($roll['traits'] ?? []) : []);
+    }
+    return array_keys($keys);
 }
 
 /**
@@ -252,6 +324,19 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
             }
             if ($prop['live'] ?? false) {
                 return new WP_Error('chronicler_invalid_template', "Property \"$id\": a derived property is computed — it cannot be live.");
+            }
+        }
+        // "traits" label a ROLL for effect targeting, and the only property
+        // that is itself rollable is a dice pool — so on anything else the map
+        // would sit there meaning nothing, the same silent-no-op the key
+        // allowlists exist to catch.
+        if (isset($prop['traits'])) {
+            if ($type !== 'dice') {
+                return new WP_Error('chronicler_invalid_template', "Property \"$id\": \"traits\" only applies to dice properties — they label the roll a property offers.");
+            }
+            $err = chronicler_sheets_validate_traits($prop['traits'], "Property \"$id\"");
+            if ($err !== null) {
+                return $err;
             }
         }
         // Audience flags gate whole properties; nothing consults them inside
@@ -424,12 +509,152 @@ function chronicler_sheets_parse_template(string $source, bool $lenient = false)
         $rolls[$parsed_roll['id']] = $parsed_roll;
     }
 
+    // "effects" (2026-08-04): the modifiers this system knows how to hand
+    // out. A template declares only the VOCABULARY — nothing lands on a
+    // character until a game master applies it, and what an applied instance
+    // does is read back from here at roll time, so editing a definition
+    // retroactively fixes every instance of it. Checked after rolls because
+    // an effect's targeting is written in terms of them.
+    $effects = [];
+    $declared_effects = $data['effects'] ?? [];
+    if (!is_array($declared_effects)) {
+        if (!$lenient) {
+            return new WP_Error('chronicler_invalid_template', '"effects" must be a list of effects.');
+        }
+        $declared_effects = [];
+    }
+    $trait_keys = chronicler_sheets_template_traits(['properties' => $properties, 'rolls' => $rolls]);
+    foreach ($declared_effects as $i => $effect) {
+        $parsed_effect = chronicler_sheets_parse_effect($effect, $draft, $trait_keys, '"effects" entry ' . ($i + 1), $lenient);
+        if (is_wp_error($parsed_effect)) {
+            if (!$lenient) {
+                return $parsed_effect;
+            }
+            // An effect nobody can apply must not cost the sheet its render
+            // (#140), exactly like a roll nobody can roll: drop it, keep the
+            // character. Its instances then read as unknown and get flagged.
+            continue;
+        }
+        if (isset($effects[$parsed_effect['id']])) {
+            if (!$lenient) {
+                return new WP_Error('chronicler_invalid_template', "Duplicate effect id \"{$parsed_effect['id']}\".");
+            }
+            continue;
+        }
+        $effects[$parsed_effect['id']] = $parsed_effect;
+    }
+
     return [
         'system' => $data['system'],
         'version' => $data['version'],
         'properties' => $properties,
         'layout' => $layout,
         'rolls' => $rolls,
+        'effects' => $effects,
+    ];
+}
+
+/**
+ * One `effects` entry, normalized to
+ * ['id', 'label', 'detail'|null, 'modifier', 'applies_to'|null, 'cap'|null]
+ * — or a WP_Error naming the problem. $draft is the properties-only template
+ * an expression modifier is fenced against.
+ *
+ * `modifier` is the whole behavior and is required in one of two forms. An
+ * INTEGER is the sugar: "contribute this much, times the instance's amount,
+ * to every roll `applies_to` names" — one target word, matched against the
+ * roll's id, its label, a truthy trait, then the properties its dice reach.
+ * A STRING is an expression in the same fenced language as `derived`, which
+ * decides for itself which rolls it touches; `applies_to` alongside one is
+ * refused rather than silently ignored, because an author who wrote both
+ * believes both are doing something.
+ *
+ * `cap` bounds the SUM of one effect id's stacked instances (two Taunts stop
+ * at -2) — the rule that otherwise drifts between prose and a property bound.
+ *
+ * $trait_keys is the template's declared-trait union: an expression may ask a
+ * roll about any of them and about a roll's own names, and about nothing else
+ * (chronicler_sheets_formula_effect_scope), so a misspelled trait is an error
+ * here rather than an effect that quietly never fires.
+ */
+function chronicler_sheets_parse_effect($effect, array $draft, array $trait_keys, string $where, bool $lenient = false) {
+    if (!is_array($effect)) {
+        return new WP_Error('chronicler_invalid_template', "$where must be an object.");
+    }
+    $id = $effect['id'] ?? null;
+    if (!is_string($id) || !preg_match(CHRONICLER_SHEETS_ID_PATTERN, $id)) {
+        return new WP_Error('chronicler_invalid_template', "$where: \"id\" must match [a-z][a-z0-9_]*.");
+    }
+    if (!$lenient) {
+        $err = chronicler_sheets_unknown_key_error($effect, CHRONICLER_SHEETS_EFFECT_KEYS, "Effect \"$id\"");
+        if ($err !== null) {
+            return $err;
+        }
+    }
+    if (!is_string($effect['label'] ?? null) || $effect['label'] === '') {
+        return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"label\" must be a non-empty string.");
+    }
+    if (isset($effect['detail']) && (!is_string($effect['detail']) || $effect['detail'] === '')) {
+        return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"detail\" must be a non-empty string.");
+    }
+    // is_int, not is_numeric: true reads as 1 and "-1" reads as -1 in PHP's
+    // looser comparisons, and an effect that quietly means something other
+    // than what it says is the failure the whole design is arguing against.
+    $modifier = $effect['modifier'] ?? null;
+    $expression = is_string($modifier) && trim($modifier) !== '' ? trim($modifier) : null;
+    if (!is_int($modifier) && $expression === null) {
+        return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"modifier\" must be a whole number (how much it contributes) or a formula string.");
+    }
+    $applies_to = $effect['applies_to'] ?? null;
+    if ($applies_to !== null) {
+        if (!is_string($applies_to) || !preg_match(CHRONICLER_SHEETS_ID_PATTERN, $applies_to)) {
+            return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"applies_to\" must be one target word — a roll id, a roll label, a trait or a property id.");
+        }
+        if ($expression !== null) {
+            return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"applies_to\" goes with a whole-number modifier — a formula picks its own rolls, so one of the two isn't doing anything.");
+        }
+    }
+    if (isset($effect['cap']) && !is_int($effect['cap'])) {
+        return new WP_Error('chronicler_invalid_template', "Effect \"$id\": \"cap\" must be a whole number — the most this effect's stacked instances can add up to.");
+    }
+    if ($expression !== null) {
+        // The two names an effect expression gets that a derived formula
+        // doesn't are planted over property scope, so a system that already
+        // has one is told to rename it rather than losing the property
+        // silently inside every effect it writes.
+        foreach (['roll', 'amount'] as $reserved) {
+            if (isset($draft['properties'][$reserved])) {
+                return new WP_Error('chronicler_invalid_template', "Effect \"$id\": a formula reads the roll it's touching as \"roll\" and its own magnitude as \"amount\", and this system has a property named \"$reserved\" — rename the property.");
+            }
+        }
+        $scope = chronicler_sheets_formula_effect_scope($draft, $trait_keys);
+        $checked = chronicler_sheets_formula_check($expression, $scope);
+        if (is_wp_error($checked)) {
+            return new WP_Error('chronicler_invalid_template', "Effect \"$id\": " . $checked->get_error_message());
+        }
+        // The dry run derived formulas get, for the same reason: an
+        // expression over perfectly good names can still produce something
+        // that is not a number, and an effect discovering that mid-roll
+        // refuses the roll in front of the table. Against a roll with nothing
+        // filled in — every trait null — which is the shape most effects are
+        // supposed to answer 0 to. Skipped when the run itself fails.
+        $dry = chronicler_sheets_formula_evaluate($expression, chronicler_sheets_formula_effect_context(
+            chronicler_sheets_formula_context($draft, []),
+            [],
+            1,
+            $trait_keys
+        ));
+        if (!is_wp_error($dry) && !is_numeric($dry)) {
+            return new WP_Error('chronicler_invalid_template', "Effect \"$id\": the formula must produce a number — how much this effect adds to the roll (0 to leave it alone).");
+        }
+    }
+    return [
+        'id' => $id,
+        'label' => $effect['label'],
+        'detail' => $effect['detail'] ?? null,
+        'modifier' => $expression ?? $modifier,
+        'applies_to' => $applies_to,
+        'cap' => $effect['cap'] ?? null,
     ];
 }
 
@@ -485,12 +710,23 @@ function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $
             return $err;
         }
     }
+    // "traits" (2026-08-04): what this roll IS, in the author's own words, so
+    // an effect can target a category rather than reciting a list of rolls.
+    // Always present on the way out, empty when undeclared — every consumer
+    // reads the same shape whether or not the system has an opinion.
+    if (isset($roll['traits'])) {
+        $err = chronicler_sheets_validate_traits($roll['traits'], "Roll \"$id\"");
+        if ($err !== null) {
+            return $err;
+        }
+    }
     return [
         'id' => $id,
         'label' => $roll['label'],
         'section' => $roll['section'] ?? null,
         'dice' => trim($dice),
         'detail' => $roll['detail'] ?? null,
+        'traits' => is_array($roll['traits'] ?? null) ? $roll['traits'] : [],
         'parsed' => $parsed,
     ];
 }
@@ -502,6 +738,13 @@ function chronicler_sheets_parse_roll($roll, array $draft, string $where, bool $
  * result is added to dice. Returns WP_Error or null.
  */
 function chronicler_sheets_check_roll_placeholder(string $expression, array $draft, string $where): ?WP_Error {
+    // …with one placeholder that is not an expression at all (2026-08-04): a
+    // bare dice-property id SPLICES that character's own notation into the
+    // roll, so it never reaches the engine and has no number to produce. Any
+    // other use of a pool falls through to the fence, which refuses it.
+    if (chronicler_sheets_formula_pool_ref($expression, $draft) !== null) {
+        return null;
+    }
     $checked = chronicler_sheets_formula_check($expression, $draft);
     if (is_wp_error($checked)) {
         return new WP_Error('chronicler_invalid_template', "$where: {" . $expression . '}: ' . $checked->get_error_message());
@@ -602,6 +845,20 @@ function chronicler_sheets_check_constraints(string $id, string $type, array $pr
             }
             if (!$lenient) {
                 $err = chronicler_sheets_unknown_key_error($field, CHRONICLER_SHEETS_LIST_FIELD_KEYS, "Property \"$id\": field \"$fid\"");
+                if ($err !== null) {
+                    return $err;
+                }
+            }
+            // A dice field's traits ride every roll its entries contribute —
+            // tag the field once and every weapon on every sheet is an
+            // "attack". On any other field type there is no roll to label,
+            // which is the same silent no-op a dice property's traits are
+            // refused for (2026-08-04).
+            if (isset($field['traits'])) {
+                if ($ftype !== 'dice') {
+                    return new WP_Error('chronicler_invalid_template', "Property \"$id\": field \"$fid\": \"traits\" only applies to dice fields — they label the roll an entry contributes.");
+                }
+                $err = chronicler_sheets_validate_traits($field['traits'], "Property \"$id\": field \"$fid\"");
                 if ($err !== null) {
                     return $err;
                 }

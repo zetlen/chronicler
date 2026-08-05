@@ -66,6 +66,7 @@ function chronicler_sheets_register_property_meta(): void {
         'number' => 'integer', 'track' => 'integer', 'counter' => 'integer',
         'toggle' => 'boolean', 'checklist' => 'array', 'list' => 'array',
         'select' => 'string', 'text' => 'string', 'longtext' => 'string',
+        'dice' => 'string',
     ];
     foreach ($template['properties'] as $id => $property) {
         // Opinions (#183) never store under the property's own key — each

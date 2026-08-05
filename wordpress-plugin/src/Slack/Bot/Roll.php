@@ -7,9 +7,9 @@ namespace Chronicler\Slack\Bot;
  * own values substituted. A roll belongs to whatever declares it (design
  * 2026-07-25, "a move carries its own roll"): the system declares the rolls
  * every character has in its `rolls:` table, and the character declares its
- * own by writing dice on a list entry (a playbook move, a weapon). respond()
- * serves the union — system rolls first, then each contributing list's
- * section, via chronicler_sheets_character_rolls().
+ * own by writing dice on a list entry (a playbook move, a weapon) or by
+ * carrying a dice pool (2026-08-04 — a `dice` property is a roll under its
+ * own name). respond() serves the union — see union() below.
  *
  * Resolution follows the same discipline as `/game my`: roll id → roll label →
  * unique prefix, and an ambiguous word comes back as a disambiguation rather
@@ -29,6 +29,19 @@ namespace Chronicler\Slack\Bot;
  * wrong number besides. values() checks every reference against the filtered
  * sheet before a single die is thrown, and the refusal never names the
  * property — naming it would leak its existence.
+ *
+ * Dice pools (2026-08-04) add no carve-out: `{gut}` is checked against the
+ * filtered sheet exactly like `{cool}`, and an invisible one refuses in the
+ * same unrevealing words. The one refusal that DOES name a property — a pool
+ * holding something that isn't dice — names it for the opposite reason: that
+ * check runs only after the pool was found on the viewer's own sheet.
+ *
+ * Effects (2026-08-04) add none either. An effect is public — it prints on the
+ * sheet and in every roll it touches, and a refusal may name it — but its
+ * modifier can be a FORMULA, and a formula reading a gm_only stat would leak
+ * it through the total just as a placeholder would. So effects() fences every
+ * expression modifier against the same filtered sheet and refuses in the same
+ * unrevealing words, before a single die is thrown.
  *
  * The rule has exactly one carve-out (2026-07-25 Phase B): a reference named
  * `entry` on a character-carried roll. The entry's values ride a list the
@@ -66,7 +79,18 @@ final class Roll
         if (!is_array($template)) {
             return self::plain('That character has no sheet template yet, so there is nothing to roll.');
         }
-        return self::respond($query, $template, $viewer['sheet'], $viewer['url']);
+        // The character's applied effects (2026-08-04) are READ here and never
+        // written: nothing expires by itself, so a roll changes no state. They
+        // arrive as a parameter for the same reason the randomizer does —
+        // respond() stays a pure function of what it was handed.
+        return self::respond(
+            $query,
+            $template,
+            $viewer['sheet'],
+            $viewer['url'],
+            null,
+            chronicler_sheets_effects_get((int) $viewer['character']->ID)
+        );
     }
 
     // -- The command (pure) ---------------------------------------------------
@@ -77,26 +101,19 @@ final class Roll
      *                                source of values, by design.
      * @param ?callable     $rng      fn(int $min, int $max): int; production
      *                                omits it and gets wp_rand().
+     * @param array         $effects  The character's applied effect instances
+     *                                (sheets/effects.php). Handed in, never
+     *                                read from meta here, so this stays pure.
      */
     public static function respond(
         string $query,
         array $template,
         array $sheet,
         ?string $url = null,
-        ?callable $rng = null
+        ?callable $rng = null,
+        array $effects = []
     ): array {
-        $declared = is_array($template['rolls'] ?? null) ? $template['rolls'] : [];
-        // The union everything below sees: the system's rolls (id-keyed,
-        // every character has all of them) first, then the sheet's own
-        // contributions (2026-07-25: a move carries its own roll) — list
-        // entries with dice written on them, id-less by design, keyed
-        // "sheet:N" so the union can't collide with the id namespace.
-        // Resolution runs over the union, so a sheet roll is rollable
-        // exactly like a declared one.
-        $rolls = $declared;
-        foreach (\chronicler_sheets_character_rolls($sheet) as $i => $contributed) {
-            $rolls['sheet:' . $i] = $contributed;
-        }
+        $rolls = self::union($template, $sheet);
         if ($rolls === []) {
             return self::plain(
                 '*' . Commands::escape((string) ($template['system'] ?? 'This system'))
@@ -124,11 +141,19 @@ final class Roll
 
         $resolved = self::values($roll, $template, $sheet);
         if (isset($resolved['hidden'])) {
-            // Deliberately vague: naming the property would leak the very
-            // thing the refusal exists to protect.
+            return self::hidden($roll);
+        }
+        if (isset($resolved['pool'])) {
+            // The opposite of the refusal above: this pool is the roller's own
+            // visible property, so naming it (and what the sheet holds) leaks
+            // nothing and is the only way they'd know what to fix.
+            $written = $resolved['pool']['value'] === ''
+                ? 'the sheet has it blank'
+                : 'the sheet has "' . Commands::escape($resolved['pool']['value']) . '"';
             return self::plain(
-                '*' . Commands::escape((string) $roll['label']) . '* needs a stat you can\'t see, '
-                . 'so I won\'t roll it. Your game master can.'
+                '*' . Commands::escape((string) $roll['label']) . '* needs *'
+                . Commands::escape($resolved['pool']['label'])
+                . '* written as dice (like 2d6+1d4) — ' . $written . '.'
             );
         }
         if (isset($resolved['error'])) {
@@ -138,12 +163,121 @@ final class Roll
             );
         }
 
+        // What the character's applied effects do to THIS roll, resolved
+        // against the same context the placeholders just ran against.
+        $applied = self::effects($effects, $roll, $template, $sheet, $resolved['context']);
+        if (isset($applied['hidden'])) {
+            return self::hidden($roll);
+        }
+        if ($applied['error'] !== null) {
+            // The effect's LABEL and nothing else. Effects are public — they
+            // print on the sheet and in every roll they touch — so naming one
+            // leaks nothing, and the roller needs to know which to clear.
+            return self::plain(
+                '*' . Commands::escape((string) $roll['label']) . '* can\'t roll: the *'
+                . Commands::escape($applied['error']) . '* effect didn\'t work out.'
+            );
+        }
+
         return self::reply(
             (string) ($sheet['title'] ?? 'Someone'),
             $roll,
-            chronicler_sheets_roll_dice($roll['parsed'], $resolved['values'], $rng),
-            $url
+            chronicler_sheets_roll_dice($resolved['parsed'], $resolved['values'], $rng),
+            $url,
+            $applied['terms']
         );
+    }
+
+    /**
+     * The effect terms for one roll: ['terms' => [['label','value'], …],
+     * 'error' => ?string], or ['hidden' => [property ids]] when an effect's
+     * expression reaches for something the VIEWER-FILTERED sheet doesn't
+     * carry.
+     *
+     * That last case is the security rule (class docblock) reaching the one
+     * place values() cannot see: an effect's modifier may be a formula, and a
+     * formula reading a gm_only stat leaks it through the total exactly like a
+     * placeholder would. So every expression modifier goes through the same
+     * fence, the same visible-sheet membership test, and the same unrevealing
+     * refusal. Effects themselves are public and stay nameable; the PROPERTY
+     * an expression reached for does not.
+     *
+     * Sugar modifiers read nothing off the sheet — they are a constant and a
+     * target word — so only expressions are checked.
+     */
+    public static function effects(array $instances, array $roll, array $template, array $sheet, array $context): array
+    {
+        if ($instances === []) {
+            return ['terms' => [], 'error' => null];
+        }
+        $definitions = is_array($template['effects'] ?? null) ? $template['effects'] : [];
+        $scope = chronicler_sheets_formula_effect_scope(
+            $template,
+            chronicler_sheets_template_traits($template)
+        );
+        $visible = self::visible($sheet);
+        $hidden = [];
+        foreach ($instances as $instance) {
+            $effect = $instance['effect'] ?? null;
+            $definition = $effect === null ? null : ($definitions[$effect] ?? null);
+            // A one-off's modifier is always a number (the store refuses
+            // anything else), and an instance of a dropped definition is
+            // skipped by the evaluator — neither reads a property.
+            if (!is_array($definition) || !is_string($definition['modifier'])) {
+                continue;
+            }
+            $checked = chronicler_sheets_formula_check($definition['modifier'], $scope);
+            if (is_wp_error($checked)) {
+                return ['terms' => [], 'error' => (string) $definition['label']];
+            }
+            foreach ($checked['refs'] as $ref) {
+                // `roll` and `amount` are the effect scope's synthetic names
+                // (formulas.php), not properties anybody could hide.
+                if ($ref === 'roll' || $ref === 'amount') {
+                    continue;
+                }
+                if (!array_key_exists($ref, $visible)) {
+                    $hidden[$ref] = true;
+                }
+            }
+        }
+        if ($hidden !== []) {
+            return ['hidden' => array_keys($hidden)];
+        }
+        return chronicler_sheets_effects_for_roll($instances, $template, $roll, $context);
+    }
+
+    /**
+     * Everything this character can roll, in menu order: the system's rolls
+     * (id-keyed, every character has all of them) first, then the character's
+     * own — dice pools keyed "pool:<id>" (2026-08-04) and list entries with
+     * dice written on them keyed "sheet:N" (2026-07-25: a move carries its
+     * own roll). Both prefixes keep the union's keys out of the id namespace,
+     * so a system roll named after one of them is AMBIGUOUS at resolution,
+     * never silently overridden. Resolution runs over the union, so every
+     * kind is rollable exactly like a declared one.
+     *
+     * Every roll leaves here carrying the two keys effect evaluation reads:
+     * `traits` (what the roll IS — declared, defaulting to none) and `uses`
+     * (what its dice reach, pools included). They ride the union rather than
+     * the execution path because the effects that read them are per-roll, and
+     * a roll's identity shouldn't depend on who asked for it.
+     */
+    public static function union(array $template, array $sheet): array
+    {
+        $rolls = is_array($template['rolls'] ?? null) ? $template['rolls'] : [];
+        foreach (\chronicler_sheets_dice_property_rolls($sheet) as $id => $pool) {
+            $rolls['pool:' . $id] = $pool;
+        }
+        foreach (\chronicler_sheets_character_rolls($sheet) as $i => $contributed) {
+            $rolls['sheet:' . $i] = $contributed;
+        }
+        foreach ($rolls as $key => $roll) {
+            $roll['traits'] = is_array($roll['traits'] ?? null) ? $roll['traits'] : [];
+            $roll['uses'] = \chronicler_sheets_roll_uses($roll, $template);
+            $rolls[$key] = $roll;
+        }
+        return $rolls;
     }
 
     /**
@@ -213,15 +347,21 @@ final class Roll
     }
 
     /**
-     * Resolve every {…} placeholder against the VIEWER-FILTERED sheet.
+     * Resolve every {…} placeholder against the VIEWER-FILTERED sheet, and
+     * splice every dice pool the roll reaches for.
      *
-     * Returns ['values' => [expression => number]] keyed the way
-     * chronicler_sheets_roll_dice() expects, or ['hidden' => [property ids]]
-     * when the roll reaches for something this viewer cannot see (see the
-     * class docblock — this is the security rule), or ['error' => message]
-     * when a placeholder fails to evaluate, or evaluates to something dice
-     * cannot add — roll_dice() would quietly read either as 0, and a wrong
-     * total posted in_channel is the failure a dice bot exists to prevent.
+     * Returns ['values' => [expression => number], 'parsed' => the roll's
+     * terms with pools expanded, 'context' => the character's formula context]
+     * keyed the way chronicler_sheets_roll_dice() expects — the context rides
+     * along so effect expressions evaluate against exactly what the
+     * placeholders did, rather than a second copy that could drift — or
+     * ['hidden' => [property ids]] when the roll reaches for
+     * something this viewer cannot see (see the class docblock — this is the
+     * security rule), or ['pool' => [label, value]] when a pool the viewer CAN
+     * see holds nothing rollable, or ['error' => message] when a placeholder
+     * fails to evaluate, or evaluates to something dice cannot add —
+     * roll_dice() would quietly read either as 0, and a wrong total posted
+     * in_channel is the failure a dice bot exists to prevent.
      *
      * A character-carried roll brings its own 'entry' map (the collector's
      * contribution shape), so its placeholders are fenced against the
@@ -236,9 +376,10 @@ final class Roll
      */
     public static function values(array $roll, array $template, array $sheet): array
     {
-        $visible = [];
+        $visible = self::visible($sheet);
+        $labels = [];
         foreach (($sheet['properties'] ?? []) as $property) {
-            $visible[$property['id']] = $property['value'] ?? null;
+            $labels[$property['id']] = (string) ($property['label'] ?? $property['id']);
         }
 
         $entry = is_array($roll['entry'] ?? null) ? $roll['entry'] : null;
@@ -246,8 +387,45 @@ final class Roll
             ? $template
             : chronicler_sheets_formula_entry_scope($template, array_keys($entry));
 
-        $placeholders = chronicler_sheets_dice_placeholders($roll['parsed']);
+        // Pools first (2026-08-04): a placeholder that is exactly a dice
+        // property's id contributes DICE, not a number, so it is spliced out
+        // of the roll before anything tries to evaluate it. The security rule
+        // reaches it unchanged — a pool the filtered sheet doesn't carry is
+        // hidden like any other reference, refused in the same words — but a
+        // pool that IS visible and holds junk gets named: it is the roller's
+        // own property, and the sheet is where they fix it.
+        $pools = [];
         $hidden = [];
+        foreach (chronicler_sheets_dice_placeholders($roll['parsed']) as $expression) {
+            $pool = chronicler_sheets_formula_pool_ref($expression, $template);
+            if ($pool === null) {
+                continue;
+            }
+            if (!array_key_exists($pool, $visible)) {
+                $hidden[$pool] = true;
+                continue;
+            }
+            $pools[$expression] = (string) $visible[$pool];
+        }
+        if ($hidden !== []) {
+            return ['hidden' => array_keys($hidden)];
+        }
+        $parsed = chronicler_sheets_expand_dice_pools($roll['parsed'], $pools);
+        if (is_wp_error($parsed)) {
+            if ($parsed->get_error_code() === 'chronicler_invalid_pool') {
+                $data = (array) $parsed->get_error_data();
+                return ['pool' => [
+                    'label' => $labels[$data['pool']] ?? (string) $data['pool'],
+                    'value' => (string) ($data['value'] ?? ''),
+                ]];
+            }
+            // Post-expansion term limits, in the parser's own words.
+            return ['error' => $parsed->get_error_message()];
+        }
+
+        // Everything left is arithmetic — including a pool spelled any way but
+        // bare, which the fence below refuses rather than reading as 0.
+        $placeholders = chronicler_sheets_dice_placeholders($parsed);
         foreach ($placeholders as $expression) {
             $checked = chronicler_sheets_formula_check($expression, $scope);
             if (is_wp_error($checked)) {
@@ -283,7 +461,22 @@ final class Roll
             }
             $values[$expression] = $result;
         }
-        return ['values' => $values];
+        return ['values' => $values, 'parsed' => $parsed, 'context' => $context];
+    }
+
+    /**
+     * [property id => value] as the VIEWER-FILTERED sheet carries them. Both
+     * membership tests the security rule is written against — placeholders in
+     * values(), effect expressions in effects() — ask this one map, so "what
+     * can this viewer see" has a single answer.
+     */
+    private static function visible(array $sheet): array
+    {
+        $visible = [];
+        foreach (($sheet['properties'] ?? []) as $property) {
+            $visible[$property['id']] = $property['value'] ?? null;
+        }
+        return $visible;
     }
 
     // -- Rendering (pure) -----------------------------------------------------
@@ -293,30 +486,51 @@ final class Roll
      * behind it invites exactly the suspicion a dice bot exists to prevent —
      * and a die a kh/kl term dropped is struck through rather than omitted, so
      * the arithmetic can be checked from the message alone.
+     *
+     * $effects are this roll's nonzero effect terms, which ride the faces line
+     * as labeled constants and are added into the total. Labeling them there
+     * is the whole lifecycle (2026-08-04): nothing expires, so a stale effect
+     * is caught by being visible in front of the table at the exact moment it
+     * distorts a roll.
      */
-    public static function reply(string $name, array $roll, array $result, ?string $url = null): array
+    public static function reply(string $name, array $roll, array $result, ?string $url = null, array $effects = []): array
     {
         $who = Commands::escape($name);
         $linked = $url !== null && $url !== '' ? '<' . $url . '|' . $who . '>' : $who;
         $label = Commands::escape((string) $roll['label']);
         $notation = Commands::escape((string) $roll['dice']);
         $head = "🎲 *$linked* rolls *$label* — `$notation`";
-        $line = self::faces($result) . '  =  *' . $result['total'] . '*';
+        $total = $result['total'];
+        $plain = [];
+        foreach ($effects as $effect) {
+            $total += (int) $effect['value'];
+            $plain[] = sprintf('%+d %s', (int) $effect['value'], (string) $effect['label']);
+        }
+        $line = self::faces($result, $effects) . '  =  *' . $total . '*';
 
         $blocks = [BlockKit::text($head . "\n" . $line)];
         $detail = trim((string) ($roll['detail'] ?? ''));
         if ($detail !== '') {
             $blocks[] = BlockKit::context('_' . Commands::escape($detail) . '_');
         }
+        // The fallback is what a notification and a screen reader get, so the
+        // effects belong in it too — a total nothing explains is the failure
+        // the faces line exists to prevent, in a quieter font.
+        $fallback = "$name rolls {$roll['label']} — {$roll['dice']} = $total"
+            . ($plain === [] ? '' : ' (' . implode(', ', $plain) . ')');
         return [
             'response_type' => 'in_channel',
-            'text' => Commands::escape("$name rolls {$roll['label']} — {$roll['dice']} = {$result['total']}"),
+            'text' => Commands::escape($fallback),
             'blocks' => BlockKit::cap($blocks, $url),
         ];
     }
 
-    /** `[4] [3]  +2` — kept dice bracketed, dropped dice struck through. */
-    private static function faces(array $result): string
+    /**
+     * `[4] [3]  +2  -1 (Queasy)` — kept dice bracketed, dropped dice struck
+     * through, and each effect term wearing its label so the arithmetic stays
+     * checkable from the message alone.
+     */
+    private static function faces(array $result, array $effects = []): string
     {
         $parts = [];
         foreach ($result['terms'] as $term) {
@@ -331,7 +545,24 @@ final class Roll
             $group = implode(' ', $dice);
             $parts[] = $term['sign'] < 0 ? '- ' . $group : $group;
         }
+        foreach ($effects as $effect) {
+            $parts[] = sprintf('%+d (%s)', (int) $effect['value'], Commands::escape((string) $effect['label']));
+        }
         return implode('  ', $parts);
+    }
+
+    /**
+     * The refusal for a roll that reaches something this viewer cannot see.
+     * Deliberately vague, and shared by both reaches — a placeholder's and an
+     * effect expression's: naming the property would leak the very thing the
+     * refusal exists to protect.
+     */
+    private static function hidden(array $roll): array
+    {
+        return self::plain(
+            '*' . Commands::escape((string) $roll['label']) . '* needs a stat you can\'t see, '
+            . 'so I won\'t roll it. Your game master can.'
+        );
     }
 
     /**

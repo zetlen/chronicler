@@ -12,7 +12,7 @@ properties:
     type: number
     min: -1
     max: 3
-    detail: "manipulate someone, use magic"
+    detail: "manipulate someone"
   - id: cool
     label: Cool
     type: number
@@ -51,11 +51,12 @@ properties:
     length: 7
     live: true
 
-  # Unstable and Doomed are marked and cleared at the table: big harm sets
-  # them, and stabilizing — an event, not a harm level — clears Unstable, so
-  # current Harm can't tell you whether a hunter is still unstable. That makes
-  # both plain toggles; a `derived` formula fits conditions that ARE a pure
-  # function of current values (a D&D-style ability modifier, say).
+  # Conditions marked and cleared at the table are plain toggles. Taking
+  # 4-harm or more makes a hunter unstable, and stabilizing — an event, not
+  # a harm level — clears it, so current Harm can't tell you whether they
+  # still are. Doomed (a doom drawing near, per the Keeper) is the same
+  # shape. A `derived` formula fits conditions that ARE a pure function of
+  # current values (a D&D-style ability modifier, say).
   - id: unstable
     label: Unstable
     type: toggle
@@ -119,10 +120,15 @@ properties:
       # named after the entry. Gate it on the toggle so only real weapons
       # contribute. A string that doesn't parse offers no roll and breaks
       # nothing — the sheet editor flags it.
+      # A dice FIELD can carry traits too, and they ride every roll its
+      # entries contribute: tag the field once and every weapon on every
+      # sheet is an "attack", so "-1 to attacks while your arm is broken" is
+      # one effect (see effects: below) instead of one per item.
       - id: roll
         label: Roll
         type: dice
         when: is_weapon
+        traits: { attack: true }
 
   # always_show keeps an empty property visible as a prompt instead of
   # hiding the blank row. Audience flags: none is public; owner_only shows
@@ -166,19 +172,68 @@ rolls:
   # character has — a playbook move that rolls +Sharp instead of +Cool, a
   # weapon's damage — doesn't belong here: the character carries it, as dice
   # written on their own list entry (see gear's "roll" field above).
+  #
+  # "traits" is the one open corner of a roll: scalars YOU name, saying what
+  # KIND of roll this is. Nothing in the plugin knows what "basic_move" means
+  # — you invent the word, and the effects below target every roll wearing it
+  # instead of listing rolls one at a time. Custom names live under this one
+  # key precisely so the rest of the roll can stay closed: a typo'd "sectoin:"
+  # is still an error, which is how it should be.
   - id: act_under_pressure
     label: Act Under Pressure
     section: Basic Moves
     dice: "2d6 + {cool}"
-    detail: "when you do something under fire"
+    traits: { basic_move: true }
+    detail: "when you act under pressure"
   - id: kick_some_ass
     label: Kick Some Ass
     section: Basic Moves
     dice: "2d6 + {tough}"
+    traits: { basic_move: true }
     detail: "when you get into a fight"
-  # Braces take a whole formula, not just a property name: this one spends
-  # what Luck is left, halved and rounded down.
+  # Braces take a whole formula when a roll needs one — a homebrew
+  # '2d6 + {weird + floor(luck["current"] / 2)}' would fold half your
+  # remaining Luck in — but the book's Use Magic is flat +Weird, so here
+  # the braces hold just the property.
+  # The penalty a Keeper hangs on big magic — "you're at -1 to Use Magic
+  # until you sleep it off" — used to be a house rule and somebody's memory.
+  # It is an effect now (/game effect add wolf "Backlash" -1 use_magic), so
+  # it prints inside the roll until somebody clears it.
   - id: use_magic
     label: Use Magic
-    dice: '2d6 + {weird + floor(luck["current"] / 2)}'
+    dice: "2d6 + {weird}"
+    traits: { basic_move: true }
     detail: "when you work a ritual"
+
+# The modifiers this system knows how to hand out. A template only declares
+# the vocabulary; nothing lands on a character until a game master applies it
+# (/game effect add wolf forward), and then it shows up as its own labeled,
+# signed term in every roll it touches — `[5] [3] +1 (Forward) = 9`.
+effects:
+  # "+1 forward" is PbtA's own word for this: a bonus that rides your
+  # next move, then clears. Nothing expires by itself — the modifier
+  # prints on every roll it touches, so a stale one is caught at the
+  # table, which is the lifecycle. The GM applies these: /game effect
+  # add wolf forward.
+  - id: forward
+    label: Forward
+    detail: "+1 to what you roll next; clear it once it lands"
+    modifier: 1
+    cap: 2                     # the cap is ours, not the book's: however many
+                               # Forwards stack up, they stop adding at +2
+  # "+1 ongoing" is also the book's word; the named conditions carrying
+  # these next two are ours, invented to show targeting a trait and the
+  # expression form.
+  - id: ongoing_basics
+    label: Steadied
+    detail: "+1 ongoing to basic moves while the condition holds"
+    applies_to: basic_move     # a truthy trait key targets a category
+    modifier: 1
+  # The expression form, for when sugar can't say it: this reads the
+  # roll's flattened traits directly. amount scales it (apply at 2 for
+  # a -2). A roll without the trait evaluates to 0 and stays clean.
+  - id: terrified
+    label: Terrified
+    detail: "-1 to basic moves while the fear is in charge"
+    modifier: "roll['basic_move'] ? -amount : 0"
+    cap: -2

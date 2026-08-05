@@ -187,6 +187,79 @@ function chronicler_sheets_dice_placeholders(array $parsed): array {
 }
 
 /**
+ * Parsed terms rendered back to the notation they came from — "2d6 + {cool} -
+ * 1". Signs ride the operators, so a leading negative term keeps its "-" and
+ * everything else reads as written. Round-trips through
+ * chronicler_sheets_parse_dice(): the expansion below relies on that.
+ */
+function chronicler_sheets_dice_notation(array $terms): string {
+    $notation = '';
+    foreach (array_values($terms) as $i => $term) {
+        $negative = $term['sign'] < 0;
+        if ($i === 0) {
+            $notation .= $negative ? '-' : '';
+        } else {
+            $notation .= $negative ? ' - ' : ' + ';
+        }
+        $notation .= $term['notation'];
+    }
+    return $notation;
+}
+
+/**
+ * A parsed roll with every dice-pool placeholder replaced by the terms of the
+ * character's own pool (2026-08-04): `"{gut} + {nausea_mod}"` over a Gut of
+ * "2d6+1d4" rolls 2d6 + 1d4 + the modifier. $pools maps a placeholder's whole
+ * expression string — the same key chronicler_sheets_roll_dice() uses for
+ * $values — to that character's stored notation; a placeholder the map doesn't
+ * mention is left alone as the number it is. Callers decide what counts as a
+ * pool (chronicler_sheets_formula_pool_ref) and owe the visibility check
+ * BEFORE calling: this function only reads what it is handed.
+ *
+ * The spliced terms take the placeholder's sign, so "1d20 - {gut}" subtracts
+ * the whole pool rather than only its first die. The result is re-parsed from
+ * the expanded notation rather than assembled by hand, which is what makes the
+ * limits apply POST-expansion with the parser's own wording — a ten-term roll
+ * splicing a three-term pool is refused there, not discovered mid-roll. (The
+ * per-term dice and side limits can't be broken by splicing: every spliced
+ * term already passed them in the pool's own parse.)
+ *
+ * Returns the parsed shape, or a WP_Error: 'chronicler_invalid_pool' when a
+ * pool is empty or doesn't parse — data ['pool' => expression, 'value' =>
+ * what the sheet holds], because the caller words that refusal in terms of
+ * the character's own property — and the parser's own error otherwise.
+ */
+function chronicler_sheets_expand_dice_pools(array $parsed, array $pools) {
+    if ($pools === []) {
+        return $parsed;
+    }
+    $terms = [];
+    foreach ($parsed['terms'] as $term) {
+        $expression = $term['kind'] === 'expr' ? $term['expression'] : null;
+        if ($expression === null || !array_key_exists($expression, $pools)) {
+            $terms[] = $term;
+            continue;
+        }
+        $notation = trim((string) $pools[$expression]);
+        $pool = $notation === '' ? null : chronicler_sheets_parse_dice($notation);
+        if ($pool === null || is_wp_error($pool)) {
+            return new WP_Error(
+                'chronicler_invalid_pool',
+                $pool === null
+                    ? "\"$expression\" has no dice written in it yet."
+                    : $pool->get_error_message(),
+                ['pool' => $expression, 'value' => $notation]
+            );
+        }
+        foreach ($pool['terms'] as $spliced) {
+            $spliced['sign'] *= $term['sign'];
+            $terms[] = $spliced;
+        }
+    }
+    return chronicler_sheets_parse_dice(chronicler_sheets_dice_notation($terms));
+}
+
+/**
  * The production randomizer: fn(int $min, int $max): int. wp_rand() when
  * WordPress is loaded (it seeds better than rand()), random_int() otherwise so
  * the harness and CLI callers work on a bare checkout.
@@ -331,6 +404,92 @@ function chronicler_sheets_character_rolls(array $sheet): array {
         }
     }
     return $rolls;
+}
+
+/**
+ * The rolls a character's dice POOLS contribute (2026-08-04), keyed by
+ * property id: a pool is a thing you roll — `/game roll gut` — not only a
+ * thing other rolls splice. Takes the VIEWER-FILTERED sheet for the same
+ * reason the collector above does: a pool the viewer can't see isn't on it,
+ * so it offers no roll and no one has to remember to filter here.
+ *
+ * The shape matches a declared roll's, so nothing downstream branches:
+ *
+ *   ['id' => 'gut', 'label' => 'Gut', 'section' => null, 'detail' => …|null,
+ *    'dice' => the stored notation, 'parsed' => …, 'traits' => …, 'uses' => ['gut']]
+ *
+ * `uses` starts with the pool's own id because rolling Gut IS using Gut —
+ * an effect that targets the pool has to reach its own roll first.
+ *
+ * Lenient, per the dice-value precedent (#181): a pool holding something that
+ * doesn't parse simply offers no roll. Splicing it into a system roll is the
+ * loud path (chronicler_sheets_expand_dice_pools); a menu is not the place to
+ * discover a typo.
+ */
+function chronicler_sheets_dice_property_rolls(array $sheet): array {
+    $rolls = [];
+    foreach (($sheet['properties'] ?? []) as $property) {
+        if (($property['type'] ?? null) !== 'dice') {
+            continue;
+        }
+        $dice = trim((string) ($property['value'] ?? ''));
+        if ($dice === '') {
+            continue;
+        }
+        $parsed = chronicler_sheets_parse_dice($dice);
+        if (is_wp_error($parsed)) {
+            continue;
+        }
+        $detail = trim((string) ($property['detail'] ?? ''));
+        $rolls[$property['id']] = [
+            'id' => $property['id'],
+            'label' => $property['label'],
+            'section' => null,
+            'detail' => $detail === '' ? null : $detail,
+            'dice' => $dice,
+            'parsed' => $parsed,
+            'traits' => is_array($property['traits'] ?? null) ? $property['traits'] : [],
+            'uses' => [$property['id']],
+        ];
+    }
+    return $rolls;
+}
+
+/**
+ * The property ids one roll's dice reach — every pool it splices and every
+ * property its {…} placeholders read. What effect targeting matches against
+ * ("rizz" hits any roll whose dice use Rizz), so it answers from the same
+ * fence the save path uses rather than a second reading of the notation.
+ *
+ * Whatever the roll already claims (a pool's own id) is kept. A placeholder
+ * the fence rejects contributes nothing rather than throwing: this runs over
+ * the whole menu, and one broken expression must stay as inert here as it is
+ * everywhere else — the roll path is where it refuses out loud. `entry` is a
+ * namespace, not a property, so it never counts as one.
+ */
+function chronicler_sheets_roll_uses(array $roll, array $template): array {
+    $uses = array_values(array_filter((array) ($roll['uses'] ?? []), 'is_string'));
+    $entry = is_array($roll['entry'] ?? null) ? $roll['entry'] : null;
+    $scope = $entry === null
+        ? $template
+        : chronicler_sheets_formula_entry_scope($template, array_keys($entry));
+    foreach (chronicler_sheets_dice_placeholders($roll['parsed'] ?? ['terms' => []]) as $expression) {
+        $pool = chronicler_sheets_formula_pool_ref($expression, $template);
+        if ($pool !== null) {
+            $uses[] = $pool;
+            continue;
+        }
+        $checked = chronicler_sheets_formula_check($expression, $scope);
+        if (is_wp_error($checked)) {
+            continue;
+        }
+        foreach ($checked['refs'] as $ref) {
+            if ($ref !== 'entry') {
+                $uses[] = $ref;
+            }
+        }
+    }
+    return array_values(array_unique($uses));
 }
 
 /**

@@ -183,6 +183,62 @@ function chronicler_sheets_render_welcome_banner(bool $requested, bool $can_edit
     return '<p class="chr-sheet__welcome" role="status">You’re logged in — this is your character sheet.</p>';
 }
 
+/**
+ * The builtin Active Effects row (2026-08-04): what a game master has applied
+ * to this character. Authors do not place it in `layout` — it renders from the
+ * character's own state, and a character carrying nothing shows nothing at all.
+ *
+ * Each instance says the same things `/game effect` says, in the same order:
+ * label, signed contribution, ×amount when it isn't one, what it applies to,
+ * and the note the GM left. A formula modifier prints as "expr" because what it
+ * contributes depends on the roll — the roll output is where its real number
+ * shows up, labeled, which is the point of the whole design.
+ *
+ * A NAMED instance carries no label of its own (the definition is the
+ * authority), so one whose definition the template no longer declares renders
+ * under the id it was applied with, flagged. Nothing disappears behind the
+ * table's back: the flag is how the GM knows there is something to clear.
+ */
+function chronicler_sheets_render_effects(int $post_id, array $template): string {
+    $instances = chronicler_sheets_effects_get($post_id);
+    if ($instances === []) {
+        return '';
+    }
+    $definitions = is_array($template['effects'] ?? null) ? $template['effects'] : [];
+    $rows = '';
+    foreach ($instances as $instance) {
+        $effect = $instance['effect'] ?? null;
+        $definition = $effect === null ? null : ($definitions[$effect] ?? null);
+        $unknown = $effect !== null && !is_array($definition);
+        $label = $unknown ? (string) $effect : (string) ($definition === null ? $instance['label'] : $definition['label']);
+        $rows .= '<li class="chr-effect' . ($unknown ? ' chr-effect--unknown' : '') . '"'
+            . ($effect === null ? '' : ' data-effect="' . esc_attr((string) $effect) . '"') . '>'
+            . '<span class="chr-effect__label">' . esc_html($label) . '</span>';
+        if ($unknown) {
+            $rows .= '<span class="chr-effect__note">no longer in this system — clear it?</span></li>';
+            continue;
+        }
+        $modifier = $definition === null ? $instance['modifier'] : $definition['modifier'];
+        $rows .= '<span class="chr-effect__modifier">'
+            . esc_html(is_string($modifier) ? 'expr' : sprintf('%+d', (int) $modifier)) . '</span>';
+        $amount = (int) ($instance['amount'] ?? 1);
+        if ($amount !== 1) {
+            $rows .= '<span class="chr-effect__amount">×' . $amount . '</span>';
+        }
+        $target = $definition === null ? ($instance['target'] ?? null) : ($definition['applies_to'] ?? null);
+        if ($target !== null && $target !== '') {
+            $rows .= '<span class="chr-effect__target">on ' . esc_html((string) $target) . '</span>';
+        }
+        $note = trim((string) ($instance['note'] ?? ''));
+        if ($note !== '') {
+            $rows .= '<span class="chr-effect__note">' . esc_html($note) . '</span>';
+        }
+        $rows .= '</li>';
+    }
+    return '<section class="chr-section chr-section--effects"><h2>Active Effects</h2>'
+        . '<ul class="chr-effects">' . $rows . '</ul></section>';
+}
+
 function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): string {
     $template = chronicler_sheets_template_for_character($post_id);
     if ($template === null) {
@@ -306,6 +362,14 @@ function chronicler_sheets_render_sheet(int $post_id, string $intro = ''): strin
             $npc_note .= ' Each logged-in player also sees an opinion box here — a private notebook only they (and you) can read.';
         }
         $html .= '<p class="chr-sheet__npc-note">' . $npc_note . '</p>';
+    }
+    // Applied effects (2026-08-04) sit right under the masthead: they are the
+    // most temporary thing on the page and the one thing a stale copy of the
+    // sheet gets wrong. Public, like every other effect surface — no secret
+    // effects — but an NPC's are withheld with the rest of its stat block,
+    // since to a visitor that page is lore and not a sheet at all.
+    if (!$is_npc || $can_edit) {
+        $html .= chronicler_sheets_render_effects($post_id, $template);
     }
     // The unstructured rich block (post content) sits between header and stats.
     if (trim($intro) !== '') {

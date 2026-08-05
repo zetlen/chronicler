@@ -1,0 +1,18 @@
+# A formula modifier picks its own rolls, so applies_to alongside one is one
+# of the two doing nothing — the author meant something the template can't say.
+system: Two Ways To Aim
+version: 1
+properties:
+  - id: cool
+    label: Cool
+    type: number
+rolls:
+  - id: act
+    label: Act Under Pressure
+    dice: "2d6 + {cool}"
+    traits: { basic_move: true }
+effects:
+  - id: terrified
+    label: Terrified
+    modifier: "roll['basic_move'] ? -amount : 0"
+    applies_to: act

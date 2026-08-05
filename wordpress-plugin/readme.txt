@@ -4,7 +4,7 @@ Tags: slack, rpg, transcripts, character-sheets, tabletop
 Requires at least: 6.2
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 4.30.0
+Stable tag: 4.31.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -46,6 +46,9 @@ PHP 8.2+ and WordPress 6.2+. Features that need newer WordPress (block-theme tem
 Sessions live in a dedicated `chronicler_sessions` table; rules and the game-system template are custom post types with their config in post meta; characters are a public post type. Uninstalling removes all of it — except media you uploaded yourself and images that published transcripts still use, which stay in the Media Library.
 
 == Changelog ==
+
+= 4.31.0 =
+* Dice pools are first-class character properties now: give a property `type: dice`, write your pool ("2d6+1d4") on your sheet, and roll it by name. System rolls can splice a character's own pool with a bare placeholder — "{gut} + {nausea_mod}" means everyone rolls the same check with their own dice. And game masters can put named effects on characters — buffs and debuffs that print themselves, labeled, on every roll they touch, so nothing modifies a roll invisibly and a stale effect gets caught at the table.
 
 = 4.30.0 =
 * One active character per player, made dependable: login and Slack now agree on which sheet is "yours". If a player has several sheets and none is marked active, the most recent one is promoted automatically the first time it's needed. Unchecking "Active Character" on a sheet now opts that sheet out of the automatic pick for good — uncheck it everywhere and the player simply has no active character.

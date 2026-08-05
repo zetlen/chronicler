@@ -1,0 +1,407 @@
+# HOT DOG HOEDOWN — THIRD PRINTING. The second printing's forward and
+# queasiness properties are effects now; the sheet stopped apologizing.
+#
+# Nothing about the GAME changed. Iron Stomach is still +2, the timer is still
+# +4, Eaten still halves, and you still do the Eat halving in your own head,
+# because dice notation cannot divide a roll and I have been told this in
+# writing. Three things about the SHEET changed, and all three were already
+# written as complaints in the second printing's own margins:
+#
+#   1. THE POOLS ARE PROPERTIES. Throat, Gut and Rizz were entries in an
+#      Attributes list, because a list with a `dice` field was the only place
+#      per-character dice could live. `type: dice` is that place now.
+#   2. FORWARD AND QUEASINESS ARE GONE from the sheet. They were never stats.
+#      They were bills that arrived, got paid, and then had to be zeroed by
+#      hand by whoever remembered, which was nobody. They are `effects` now.
+#   3. NO DICE STRING SAYS `+ {forward}` ANYMORE. It used to hang off the end
+#      of every roll in the book, copy-pasted, and I missed one for two
+#      sessions and nobody noticed, which is worse. An effect finds the rolls
+#      by itself.
+system: HOT DOG HOEDOWN
+version: 3
+
+properties:
+  # ------------------------------------------------------------- the masthead
+  - id: condiment
+    label: Signature Condiment
+    type: select
+    detail: "what you insist on, every single dog"
+    options:
+      - { id: yellow, label: Yellow Mustard }
+      - { id: brown, label: Spicy Brown }
+      - { id: ketchup, label: "Ketchup (coward)" }
+      - { id: chili, label: Chili and Onions }
+      - { id: relish, label: Neon Relish }
+      - { id: dry, label: "Dry (menace)" }
+  - id: walkout_song
+    label: Walkout Song
+    type: text
+    detail: "what the PA plays while you approach the table"
+
+  # ----------------------------------------------------------- the dice pools
+  # "You have three d4s and two d6es. Distribute them however you like. That is
+  # the whole build. Spend them all."
+  #
+  # A pool is not a number, so it was never a `number` property; and dice
+  # notation's NdM is literal, so a pool could never be a `rolls:` entry
+  # either — every competitor's Gut is different dice. THIRD PRINTING: a pool
+  # is its own property type. The value is the notation ("2d4", "2d6+1d4",
+  # "2d6kh1"), one per character, edited on the sheet like anything else, and
+  # two things follow that are the entire reason for this printing:
+  #
+  #   • /game roll gut rolls THIS competitor's Gut. No list, no lookup.
+  #   • Any roll in the system can splice it: {gut} inside a dice string
+  #     expands to whatever this competitor wrote. One line of template, five
+  #     different rolls, and the sheet keeps the difference straight.
+  #
+  # A pool splices; it does not do arithmetic. {gut} is fine, {floor(gut / 2)}
+  # is an error the editor catches while you type, because half a pool is not
+  # a thing anybody can roll. And a value that does not parse saves fine and
+  # simply offers no roll — write your build in pencil, the sheet will wait.
+  #
+  # The house rule that no pool rolls a single die (one d6 is written 2d6kh1 —
+  # you did not buy a second die, you bought a floor) is not enforced here,
+  # the same way the 3d4+2d6 budget never was. The schema counts nothing. I
+  # count everything.
+  - id: throat
+    label: Throat
+    type: dice
+    detail: "how fast you can get them down"
+  - id: gut
+    label: Gut
+    type: dice
+    detail: "how many can stay down; the pool the Nausea Check rolls, and the only stat that can end you"
+  - id: rizz
+    label: Rizz
+    type: dice
+    # A dice property may carry traits of its own, and they ride its OWN roll:
+    # /game roll rizz counts as a social roll even though no `rolls:` entry is
+    # involved. That is what makes a GM one-off like
+    # /game effect add pipes "Stage Fright" -1 social
+    # land on Taunt, Top Hork, Smoochies AND a bare Rizz roll without naming
+    # a single one of them.
+    traits: { social: true }
+    detail: "everything else: whether people like you, and how good you can make it look if you puke"
+
+  # --------------------------------------------------------- the turn stats
+  # These are stats: numbers that sit on the sheet between turns and mean
+  # something when nobody is rolling. Compare with Forward and Queasiness,
+  # which sat here for one printing pretending to be the same kind of thing.
+  - id: eaten
+    label: Eaten
+    type: counter
+    start: 0
+    live: true
+    detail: "hot dogs down and staying down; this is your score AND your peril, there is no other scoreboard"
+  - id: actions_left
+    label: Actions Left
+    type: counter
+    start: 2
+    max: 2
+    live: true
+    detail: "spend them on Eat, Taunt, Puke, or one of your moves that is an action"
+  - id: crowd
+    label: Crowd Favor
+    type: track
+    length: 5
+    live: true
+    detail: "the bleachers' love; every Rizz move adds it, and Work Refs is what spends it"
+  - id: puke_timer
+    label: Puke Timer
+    type: counter
+    start: 0
+    max: 2
+    live: true
+    detail: "turns of one-action-and-+4-Nausea still to run after a hurl; tick it down at the end of each of your turns"
+  - id: puking
+    label: Puking?
+    type: toggle
+    derived: 'puke_timer["current"] > 0'
+    detail: "true while the Puke Timer is still running — one action a turn, and markedly less in you"
+  - id: actions_this_turn
+    label: Actions This Turn
+    type: number
+    min: 0
+    max: 2
+    derived: 'puke_timer["current"] > 0 ? 1 : 2'
+    detail: "two, unless you are still shuddering, in which case one"
+  - id: empty_stomach
+    label: Empty Stomach?
+    type: toggle
+    derived: 'eaten["current"] == 0'
+    detail: "true means you do not check Nausea this turn at all — an empty stomach cannot betray you"
+
+  # Everything the SYSTEM adds to a Nausea Check, recomputed on every read:
+  #
+  #   +2   Iron Stomach. You did not wander in off the street. You trained.
+  #        Badly, and in a garage, but you trained.
+  #   +4   while the Puke Timer runs — there is markedly less in you now.
+  #   -half your Eaten, rounding down. You are not fighting every dog you ever
+  #        ate. You are fighting the ones still arguing.
+  #
+  # THIRD PRINTING: the "- queasiness + forward" tail is gone from this
+  # formula and good riddance. A derived value is a pure function of what is
+  # written on the sheet — it cannot see effects, and is not allowed to, so
+  # your Nausea Modifier never quietly changes because somebody yelled at you
+  # three minutes ago. Those two terms are effects now: they arrive labeled,
+  # inside the roll, at the exact moment they cost you a hotdog.
+  - id: nausea_mod
+    label: Nausea Modifier
+    type: number
+    min: -20
+    max: 20
+    derived: '2 + (puke_timer["current"] > 0 ? 4 : 0) - floor(eaten["current"] / 2)'
+    detail: "what the system adds to your Gut pool on the Nausea roll; beat 4 or hurl"
+  # "your Eaten cuts in half, rounding down" — worked out in advance, so nobody
+  # does arithmetic while retching.
+  - id: eaten_after_hurl
+    label: Eaten If You Blow It
+    type: number
+    min: 0
+    derived: 'floor(eaten["current"] / 2)'
+    detail: "what Eaten becomes the instant a Nausea Check comes up under 4"
+
+  # -------------------------------------------------------- the turn itself
+  # Rules text, and only rules text. The second printing gave this list a
+  # `dice` field because the Nausea Check had nowhere else to live: "roll your
+  # Gut" could not be written once for everybody, so every competitor carried
+  # their own copy of it here and updated it by hand when a Top Hork stepped a
+  # die up. All of that is a `rolls:` entry now (see nausea_check below). The
+  # rule stands generally: a dice FIELD is for dice only this character has; a
+  # roll everybody makes belongs in `rolls:`, where fixing it fixes it once.
+  - id: turn
+    label: Turn Actions
+    type: list
+    entry_label: Action
+    label_field: name
+    detail: "the Nausea Check is free and goes first; then you spend your actions"
+    fields:
+      - id: name
+        label: Action
+        type: text
+      - id: how
+        label: How It Works
+        type: longtext
+      - id: costs_action
+        label: Costs one of your actions?
+        type: toggle
+
+  # -------------------------------------------------------------- the moves
+  # Two representations on purpose, because no single property can do both
+  # jobs. A CHECKLIST is the only shape a formula can interrogate
+  # (moves["wet_bun"] is 1 when picked), so the choose-two rule below is
+  # actually enforced rather than merely written down. A LIST is the only shape
+  # that can carry per-character dice, so the playbook holds each move's rules
+  # text plus the dice THIS character rolls for it, gated behind `picked` so
+  # only the two you took offer a roll.
+  - id: moves
+    label: Moves
+    type: checklist
+    detail: "pick exactly two when you make your character"
+    options:
+      - { id: wet_bun, label: Wet Bun }
+      - { id: top_hork, label: Top Hork }
+      - { id: work_refs, label: Work Refs }
+      - { id: the_centipede, label: The Centipede }
+      - { id: smoochies, label: Smoochies }
+  - id: moves_picked
+    label: Moves Picked
+    type: number
+    derived: 'moves["wet_bun"] + moves["top_hork"] + moves["work_refs"] + moves["the_centipede"] + moves["smoochies"]'
+    detail: "how many of the five are checked"
+  - id: legal_build
+    label: Legal Build?
+    type: toggle
+    derived: 'moves_picked == 2'
+    detail: "you get two moves — no more, no fewer"
+  - id: playbook
+    label: Move Playbook
+    type: list
+    entry_label: Move
+    label_field: name
+    detail: "every move in the game; the two you took carry the dice you roll for them"
+    fields:
+      - id: name
+        label: Move
+        type: text
+      - id: effect
+        label: What It Does
+        type: longtext
+      - id: picked
+        label: Yours?
+        type: toggle
+      - id: bonus
+        label: Roll Bonus
+        type: number
+        min: -10
+        max: 10
+        when: picked
+      # SECOND PRINTING made this a live Queasiness counter to put a number in.
+      # THIRD PRINTING deletes the counter and keeps the price: this field is
+      # the price list, and the effect is the bill. Wet Bun costs 1, The
+      # Centipede costs 2, and the GM charges it as the effect's amount —
+      # /game effect add pipes queasy 2 — which the Queasy effect below
+      # multiplies by its own modifier.
+      - id: queasy_cost
+        label: Queasy Cost
+        type: number
+        min: 0
+        max: 5
+        when: picked
+      # The riders (Wet Bun, The Centipede) roll your Throat with a bonus, and
+      # THIRD PRINTING lets every sheet in the game write that the same way:
+      #     {throat} + {entry["bonus"]}
+      # {throat} splices this competitor's own pool; {entry["…"]} reaches the
+      # fields of the entry the dice are written on. Second printing made you
+      # copy your Throat notation into three rows and update all three the
+      # moment a Top Hork stepped a die up, which is how BARREL spent a whole
+      # session rolling last week's Rizz.
+      - id: roll
+        label: Roll
+        type: dice
+        when: picked
+        traits: { move: true }
+
+  # ------------------------------------------------------------ the private
+  - id: strategy
+    label: Secret Strategy
+    type: longtext
+    always_show: true
+    owner_only: true
+    detail: "your plan; the rest of the table cannot see this"
+  - id: gm_notes
+    label: DM Notes
+    type: longtext
+    always_show: true
+    gm_only: true
+  - id: ref_heat
+    label: Ref Heat
+    type: number
+    min: 0
+    max: 10
+    gm_only: true
+    detail: "how sick of you the officials are"
+
+layout:
+  # Active effects are NOT placed here. The sheet renders them itself, near
+  # the masthead, whenever a competitor has any — and renders nothing when
+  # they don't, which is the shape Forward and Queasiness always wanted and
+  # could never have as properties: a row that is simply absent when you are
+  # having a normal day.
+  - section: Competitor
+    masthead: true
+    properties: [condiment, walkout_song]
+  - id: pools
+    section: Dice Pools
+    properties: [throat, gut, rizz]
+  - id: stats
+    section: Hoedown Stats
+    properties: [eaten, actions_left, actions_this_turn, crowd, puke_timer, puking, empty_stomach, nausea_mod, eaten_after_hurl]
+  - section: Turn Actions
+    properties: [turn]
+  - section: Moves & Playbook
+    properties: [moves, moves_picked, legal_build, playbook]
+  - section: Locker Room
+    properties: [strategy, gm_notes, ref_heat]
+
+rolls:
+  # THIRD PRINTING: this section is the game now. In the second printing almost
+  # nothing could live here — every real roll was somebody's own pool, and NdM
+  # is literal, so "roll your Gut" could not be written down once for five
+  # different competitors. {gut} is exactly that fix: the placeholder expands
+  # to each character's own notation and splices its dice into the roll.
+  # The `traits:` on these say what KIND of roll each one is, so the effects
+  # below can target a category instead of reciting a list.
+  - id: nausea_check
+    label: Nausea Check
+    section: The Turn
+    dice: "{gut} + {nausea_mod}"
+    traits: { check: true }
+    detail: "top of your turn, free, before anything else: beat 4 or hurl. Skip it entirely while your Eaten is 0. Every die showing a 1 is a hurl whatever the total says — the sheet can't see that, so you have to."
+  - id: eat
+    label: Eat
+    section: The Turn
+    dice: "{throat}"
+    traits: { eating: true }
+    detail: "one Eat a turn. Halve the total, rounding down — that many dogs go down. The halving is still yours: dice notation cannot divide a roll."
+  - id: taunt
+    label: Taunt
+    section: The Turn
+    dice: '{rizz} + {crowd["current"]}'
+    traits: { social: true }
+    detail: "opposed — you roll, they roll, higher wins, ties go to the taunter. Land it and the GM hangs a Taunted on them: /game effect add barrel taunted."
+  - id: top_hork
+    label: Top Hork
+    section: Moves
+    dice: '{rizz} + {crowd["current"]}'
+    traits: { social: true }
+    detail: "costs an action. 8 or better: step a Rizz die up if you described it cool enough, Crowd +1. 2 or less: your Eaten goes to 0, not half."
+  - id: smoochies
+    label: Smoochies
+    section: Moves
+    dice: '{rizz} + {crowd["current"]}'
+    traits: { social: true }
+    detail: "costs an action. 5 or better you choose which way the dogs go, 4 or less they do. The amount is your Eat result, halved as usual, and it changes Eaten on both sheets."
+  # The one social move with no Rizz in it, and the reason Taunted below asks
+  # about roll["uses"] instead of the social trait: this roll's dice touch the
+  # crowd and a d6 of raw circumstance, so being taunted does not touch it. You
+  # can be too rattled to flirt and still perfectly capable of screaming at an
+  # official. That is not a special case in the code; it falls out of what the
+  # dice actually reference.
+  - id: work_refs
+    label: Work Refs
+    section: Moves
+    dice: '1d6 + {crowd["current"]}'
+    detail: "costs an action. Not a pool — 1d6 of raw circumstance, so the two-dice floor doesn't apply. 10 or better the ref gives you something and Crowd +1; 5 or less, Ref Heat +1 and Crowd -1."
+  # What is left are the rolls the TABLE makes, which are the same dice for
+  # everybody and always were. Crowd Swell lost its `+ {forward}` in this
+  # printing along with everything else.
+  - id: judges_ruling
+    label: Judges Ruling
+    section: House Rolls
+    dice: "1d20"
+    detail: "when nobody can agree whether that counted as swallowed; high is mercy"
+  - id: crowd_swell
+    label: Crowd Swell
+    section: House Rolls
+    dice: '1d4 + {crowd["current"]}'
+    detail: "the bleachers pick someone to turn on at the top of the round"
+
+effects:
+  # Forward and Queasiness lived up in `properties:` for one printing, as a
+  # live number and a live counter, and the whole time the rules said things
+  # the sheet could not do: Queasiness "zeroes the moment you check," Forward
+  # "lasts exactly one turn." Both facts sat in prose while the number sat on
+  # the sheet being wrong, because a stat has no idea when its turn ended.
+  #
+  # An effect does not expire either — nothing here clears itself. What it
+  # does instead is PRINT: a labeled, signed term inside every roll it
+  # touches, in front of the whole table, at the moment it costs somebody
+  # something. `[2] [4] +2 -1 (Queasy) = 7`. A stale effect gets caught the
+  # first time it matters, which is the only expiry rule that ever worked at
+  # this table. Only the GM applies and clears them; everyone can see them.
+  - id: queasy
+    label: Queasy
+    detail: "the bill for the last greedy thing you did; it lands on your next Nausea Check"
+    applies_to: nausea_check   # sugar: ONE target word, matched in order
+    modifier: -1               # against the roll's id (this one), its label,
+    cap: -3                    # a truthy trait key, then a property id
+  # `amount` is what the GM types and what the playbook's Queasy Cost column
+  # is for: Wet Bun is /game effect add barrel queasy 1, The Centipede is
+  # queasy 2, and the modifier is multiplied by it. Applying it again stacks
+  # a second instance rather than replacing the first — and `cap` bounds the
+  # SUM, so a greedy pair of riders bottoms out at -3 and stops. The "does not
+  # stack past" rule finally has one home instead of being a paragraph nobody
+  # re-reads mid-hurl.
+  - id: taunted
+    label: Taunted
+    detail: "somebody got in your head; -1 to anything you were being charming with"
+    # The expression form, for a target sugar cannot say: "every roll with
+    # Rizz in it." roll["uses"] lists the property ids the roll's dice really
+    # touched, AFTER {rizz} expands — so Taunt, Top Hork, Smoochies and a bare
+    # /game roll rizz all match, and Work Refs does not. `amount` scales it
+    # (apply at 2 for a -2), and the cap stops the pile-on at -2, because past
+    # that they stop listening to you, which frankly is the correct response
+    # to being taunted by four people.
+    modifier: "'rizz' in roll['uses'] ? -amount : 0"
+    cap: -2

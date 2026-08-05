@@ -1024,3 +1024,234 @@ $chr_entry_field = chronicler_sheets_parse_template($chr_dice_list([
     ['id' => 'entry', 'label' => 'Entry note', 'type' => 'text'],
 ]));
 check('a list FIELD named entry is fine', is_array($chr_entry_field), $chr_why($chr_entry_field));
+
+// --- dice properties (2026-08-04: a pool is a property) ---------------------
+// A `dice` property holds the character's own notation — the thing an
+// attributes-as-list workaround used to fake. Declared like any property;
+// its VALUE is player data and writes leniently, exactly as a dice field's
+// does (the read path is where an unparseable pool becomes inert).
+$chr_pool_tpl = function (array $overrides = []) {
+    return json_encode([
+        'system' => 'HOT DOG HOEDOWN', 'version' => 1,
+        'properties' => [
+            array_merge(['id' => 'gut', 'label' => 'Gut', 'type' => 'dice'], $overrides),
+        ],
+    ]);
+};
+$chr_pool = chronicler_sheets_parse_template($chr_pool_tpl());
+check('a dice property parses', is_array($chr_pool), $chr_why($chr_pool));
+check('a dice property keeps its type', is_array($chr_pool) && $chr_pool['properties']['gut']['type'] === 'dice');
+$chr_pool_prop = is_array($chr_pool) ? $chr_pool['properties']['gut'] : null;
+check('a dice property defaults to an empty pool', $chr_pool_prop !== null && chronicler_sheets_default_value($chr_pool_prop) === '');
+check(
+    'a dice value writes as trimmed text, parseable or not',
+    $chr_pool_prop !== null
+        && chronicler_sheets_apply_op($chr_pool_prop, '', 'set', ' 2d6+1d4 ') === '2d6+1d4'
+        && chronicler_sheets_apply_op($chr_pool_prop, '', 'set', '2x6 nonsense') === '2x6 nonsense'
+);
+
+// A pool is notation, not a number: nothing computes one, so `derived` gets
+// the same refusal it gives every other non-numeric type.
+$chr_pool_derived = chronicler_sheets_parse_template($chr_pool_tpl(['derived' => '1 + 1']));
+check('derived on a dice property is a save error', is_wp_error($chr_pool_derived));
+check(
+    'the derived refusal keeps the number-and-toggle wording',
+    is_wp_error($chr_pool_derived)
+        && strpos($chr_pool_derived->get_error_message(), 'derived') !== false
+        && strpos($chr_pool_derived->get_error_message(), 'number and toggle') !== false
+);
+
+// "traits" (2026-08-04): author-defined attributes that say what a roll IS,
+// so an effect can target a category ("save: dexterity") without every
+// system's vocabulary becoming a core key. On a property they ride its own
+// roll — which is why only a dice property may carry them.
+$chr_pool_traits = chronicler_sheets_parse_template($chr_pool_tpl(['traits' => ['check' => true, 'save' => 'dexterity']]));
+check('a dice property may carry traits', is_array($chr_pool_traits), $chr_why($chr_pool_traits));
+check(
+    'the traits map round-trips onto the parsed property',
+    is_array($chr_pool_traits) && ($chr_pool_traits['properties']['gut']['traits'] ?? null) === ['check' => true, 'save' => 'dexterity']
+);
+$chr_pool_shadow = chronicler_sheets_parse_template($chr_pool_tpl(['traits' => ['uses' => 1]]));
+check('a trait shadowing a reserved roll key is a save error', is_wp_error($chr_pool_shadow));
+check(
+    'the shadowed-trait error names the key',
+    is_wp_error($chr_pool_shadow) && strpos($chr_pool_shadow->get_error_message(), 'uses') !== false
+);
+check(
+    'a trait name outside the id pattern is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_pool_tpl(['traits' => ['Bad-Key' => 1]])))
+);
+check(
+    'a non-scalar trait value is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_pool_tpl(['traits' => ['tags' => [1, 2]]])))
+);
+check(
+    'a traits key that is not a map at all is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_pool_tpl(['traits' => 'nope'])))
+);
+$chr_traits_on_number = json_decode($motw, true);
+$chr_traits_on_number['properties'][0]['traits'] = ['check' => true];
+check(
+    'traits on a property with no roll of its own is a save error',
+    is_wp_error(chronicler_sheets_parse_template(json_encode($chr_traits_on_number)))
+);
+
+// --- traits on rolls and dice fields (2026-08-04) ---------------------------
+// A roll wears its own traits; a dice FIELD's traits ride every roll its
+// entries contribute (tag the field once and every weapon is an "attack").
+// Both go through the same validator a dice property's traits do.
+$chr_roll_traits = chronicler_sheets_parse_template($chr_roll_tpl([
+    ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'dice' => '2d6 + {cool}', 'traits' => ['basic_move' => true, 'save' => 'cool']],
+]));
+check('a roll may carry traits', is_array($chr_roll_traits), $chr_why($chr_roll_traits));
+check(
+    'the roll\'s traits round-trip onto the parsed roll',
+    is_array($chr_roll_traits)
+        && $chr_roll_traits['rolls']['act_under_pressure']['traits'] === ['basic_move' => true, 'save' => 'cool']
+);
+check(
+    'a roll with no traits still carries the empty map',
+    is_array($chr_rolls) && $chr_rolls['rolls']['last_breath']['traits'] === []
+);
+$chr_roll_shadow = chronicler_sheets_parse_template($chr_roll_tpl([
+    ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'dice' => '2d6 + {cool}', 'traits' => ['section' => 'basic']],
+]));
+check(
+    'a roll trait shadowing a reserved roll key is a save error naming it',
+    is_wp_error($chr_roll_shadow) && strpos($chr_roll_shadow->get_error_message(), 'section') !== false
+);
+check(
+    'a non-scalar roll trait is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_roll_tpl([
+        ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'dice' => '2d6', 'traits' => ['tags' => [1, 2]]],
+    ])))
+);
+
+$chr_field_traits = chronicler_sheets_parse_template($chr_dice_list([], []));
+check('the untraited dice field parses as before', is_array($chr_field_traits), $chr_why($chr_field_traits));
+$chr_field_traits = chronicler_sheets_parse_template(str_replace(
+    '{"id":"dice","label":"Roll","type":"dice","when":"has"}',
+    '{"id":"dice","label":"Roll","type":"dice","when":"has","traits":{"attack":true}}',
+    $chr_dice_list()
+));
+check('a dice field may carry traits', is_array($chr_field_traits), $chr_why($chr_field_traits));
+check(
+    'the field\'s traits round-trip onto the parsed field',
+    is_array($chr_field_traits) && ($chr_field_traits['properties']['moves']['fields'][3]['traits'] ?? null) === ['attack' => true]
+);
+$chr_field_traits_wrong = chronicler_sheets_parse_template($chr_dice_list([
+    ['id' => 'tags', 'label' => 'Tags', 'type' => 'text', 'traits' => ['attack' => true]],
+]));
+check(
+    'traits on a field with no roll of its own is a save error naming the field',
+    is_wp_error($chr_field_traits_wrong) && strpos($chr_field_traits_wrong->get_error_message(), 'tags') !== false
+);
+check(
+    'a field trait shadowing a reserved roll key is a save error',
+    is_wp_error(chronicler_sheets_parse_template(str_replace(
+        '{"id":"dice","label":"Roll","type":"dice","when":"has"}',
+        '{"id":"dice","label":"Roll","type":"dice","when":"has","traits":{"uses":1}}',
+        $chr_dice_list()
+    )))
+);
+
+// --- the effects vocabulary (2026-08-04) ------------------------------------
+// A template declares WHAT modifiers exist; nothing lands on a character
+// until a game master applies one. The definition is the authority at
+// evaluation time, so its shape is checked here, once, at save.
+$chr_effect_tpl = function (array $effects) use ($motw) {
+    $data = json_decode($motw, true);
+    $data['rolls'] = [
+        ['id' => 'act_under_pressure', 'label' => 'Act Under Pressure', 'dice' => '2d6 + {cool}', 'traits' => ['basic_move' => true]],
+    ];
+    $data['effects'] = $effects;
+    return json_encode($data);
+};
+$chr_effects = chronicler_sheets_parse_template($chr_effect_tpl([
+    ['id' => 'forward', 'label' => 'Forward', 'detail' => '+1 to what you roll next', 'modifier' => 1, 'cap' => 2],
+    ['id' => 'terrified', 'label' => 'Terrified', 'modifier' => "roll['basic_move'] ? -amount : 0", 'cap' => -2],
+    ['id' => 'steadied', 'label' => 'Steadied', 'applies_to' => 'basic_move', 'modifier' => 1],
+]));
+check('an effects block parses', is_array($chr_effects), $chr_why($chr_effects));
+check(
+    'effects come back keyed by id, whole',
+    is_array($chr_effects) && array_keys($chr_effects['effects']) === ['forward', 'terrified', 'steadied']
+        && $chr_effects['effects']['forward'] === [
+            'id' => 'forward', 'label' => 'Forward', 'detail' => '+1 to what you roll next',
+            'modifier' => 1, 'applies_to' => null, 'cap' => 2,
+        ]
+);
+check(
+    'an expression modifier is kept as written, trimmed',
+    is_array($chr_effects) && $chr_effects['effects']['terrified']['modifier'] === "roll['basic_move'] ? -amount : 0"
+);
+check(
+    'a template with no effects block has an empty vocabulary',
+    is_array($chr_rolls) && $chr_rolls['effects'] === []
+);
+check(
+    'a non-list effects key is a save error',
+    is_wp_error(chronicler_sheets_parse_template(str_replace('"effects":[]', '"effects":"none"', $chr_effect_tpl([]))))
+);
+check(
+    'a lenient read of a non-list effects key drops it',
+    ($x = chronicler_sheets_parse_template(str_replace('"effects":[]', '"effects":"none"', $chr_effect_tpl([])), true))
+        && is_array($x) && $x['effects'] === []
+);
+
+check(
+    'an effect id outside the id pattern is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([['id' => 'Forward!', 'label' => 'Forward', 'modifier' => 1]])))
+);
+check(
+    'two effects sharing an id is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([
+        ['id' => 'forward', 'label' => 'Forward', 'modifier' => 1],
+        ['id' => 'forward', 'label' => 'Forward Again', 'modifier' => 2],
+    ])))
+);
+check(
+    'an effect with no label is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([['id' => 'forward', 'modifier' => 1]])))
+);
+$chr_effect_unknown = chronicler_sheets_parse_template($chr_effect_tpl([
+    ['id' => 'forward', 'label' => 'Forward', 'modifier' => 1, 'expires' => 'on_use'],
+]));
+check(
+    'an unknown effect key is a save error naming it',
+    is_wp_error($chr_effect_unknown) && strpos($chr_effect_unknown->get_error_message(), 'expires') !== false
+);
+
+$chr_effect_no_mod = chronicler_sheets_parse_template($chr_effect_tpl([['id' => 'forward', 'label' => 'Forward']]));
+check(
+    'an effect with no modifier is a save error — the modifier IS the behavior',
+    is_wp_error($chr_effect_no_mod) && strpos($chr_effect_no_mod->get_error_message(), 'modifier') !== false
+);
+check(
+    'a true/false modifier is a save error, not a quiet 1',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([['id' => 'forward', 'label' => 'Forward', 'modifier' => true]])))
+);
+check(
+    'an empty modifier string is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([['id' => 'forward', 'label' => 'Forward', 'modifier' => '   ']])))
+);
+
+check(
+    'an applies_to word outside the id pattern is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([
+        ['id' => 'forward', 'label' => 'Forward', 'modifier' => 1, 'applies_to' => 'Act Under Pressure'],
+    ])))
+);
+$chr_effect_both = chronicler_sheets_parse_template($chr_effect_tpl([
+    ['id' => 'forward', 'label' => 'Forward', 'modifier' => "roll['basic_move'] ? 1 : 0", 'applies_to' => 'basic_move'],
+]));
+check(
+    'applies_to alongside a formula modifier is a save error — one of them is inert',
+    is_wp_error($chr_effect_both) && strpos($chr_effect_both->get_error_message(), 'applies_to') !== false
+);
+check(
+    'a non-integer cap is a save error',
+    is_wp_error(chronicler_sheets_parse_template($chr_effect_tpl([
+        ['id' => 'forward', 'label' => 'Forward', 'modifier' => 1, 'cap' => '2'],
+    ])))
+);

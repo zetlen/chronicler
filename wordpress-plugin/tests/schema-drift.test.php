@@ -65,6 +65,20 @@ check(
     is_array($chr_schema)
         && array_keys($chr_schema['definitions']['roll']['properties'] ?? []) === CHRONICLER_SHEETS_ROLL_KEYS
 );
+check(
+    'schema effect keys match CHRONICLER_SHEETS_EFFECT_KEYS (same values, same order)',
+    is_array($chr_schema)
+        && array_keys($chr_schema['definitions']['effect']['properties'] ?? []) === CHRONICLER_SHEETS_EFFECT_KEYS
+);
+// The traits map is the one place an author names something the plugin
+// doesn't know, so both authorities must agree on what a name may NOT be: a
+// trait shadowing a roll's own key would outrank the real thing at evaluation
+// time, and the schema refuses it structurally where PHP refuses it by name.
+check(
+    'schema traits reserved names match CHRONICLER_SHEETS_RESERVED_ROLL_KEYS (same values, same order)',
+    is_array($chr_schema)
+        && ($chr_schema['definitions']['traits']['propertyNames']['not']['enum'] ?? null) === CHRONICLER_SHEETS_RESERVED_ROLL_KEYS
+);
 // The root object's own keys, pinned the same way now that the PHP parser has
 // a top-level allowlist too (rolls, 2026-07-25).
 check(
@@ -88,6 +102,18 @@ check(
 check(
     'schema roll id pattern matches the property id pattern',
     is_array($chr_schema) && ($chr_schema['definitions']['roll']['properties']['id']['pattern'] ?? null) === $chr_id_pattern
+);
+check(
+    'schema effect id pattern matches the property id pattern',
+    is_array($chr_schema) && ($chr_schema['definitions']['effect']['properties']['id']['pattern'] ?? null) === $chr_id_pattern
+);
+check(
+    'schema trait name pattern matches the property id pattern',
+    is_array($chr_schema) && ($chr_schema['definitions']['traits']['propertyNames']['pattern'] ?? null) === $chr_id_pattern
+);
+check(
+    'schema effect applies_to pattern matches the property id pattern',
+    is_array($chr_schema) && ($chr_schema['definitions']['effect']['properties']['applies_to']['pattern'] ?? null) === $chr_id_pattern
 );
 
 // --- Drift check #3: formula vocabulary (#149) -------------------------------
@@ -135,10 +161,10 @@ check(
 
 // --- Drift check #2: curated corpus agreement (needs opis/json-schema) -------
 // Every valid-* fixture must be accepted by BOTH the schema and the PHP
-// validator; every schema-invalid-* fixture must be REJECTED by the schema
-// (Phase B's editor flags it inline). Relational/formula-only violations are
-// intentionally NOT in this corpus — the schema cannot express them and PHP
-// already covers them elsewhere.
+// validator; every schema-invalid-* fixture must be REJECTED by both — the
+// editor flags it inline (Phase B), the write path refuses to save it. The one
+// fixture only one authority can see is named below and pinned in BOTH
+// directions rather than waved through.
 if (!class_exists(\Opis\JsonSchema\Validator::class)) {
     check(
         'opis/json-schema available for the corpus drift check',
@@ -170,6 +196,15 @@ if (!class_exists(\Opis\JsonSchema\Validator::class)) {
         check("corpus: $name is accepted by the PHP validator", is_array($parsed), is_wp_error($parsed) ? $parsed->get_error_message() : '');
     }
 
+    // Dice notation is an opaque string to JSON Schema — nothing in a schema
+    // can look inside "1d6 + {floor(gut/2)}" and see a dice pool being asked
+    // to be a number. That rule lives in the formula fence alone, and the
+    // fixture is worth keeping anyway because it is what holds the fence onto
+    // the SAVE path. So the asymmetry itself is the assertion: the schema
+    // accepts this one, PHP refuses it. Should the schema ever learn to say
+    // it, this line fails and the fixture graduates to the general case.
+    $chr_php_only_invalid = ['schema-invalid-dice-in-arithmetic.yaml'];
+
     foreach ($chr_invalid_files as $file) {
         $name = basename($file);
         $decoded = chronicler_sheets_decode_template(file_get_contents($file));
@@ -178,6 +213,14 @@ if (!class_exists(\Opis\JsonSchema\Validator::class)) {
         if (!is_array($decoded)) {
             continue;
         }
-        check("corpus: $name is rejected by the schema", !$chr_schema_accepts($decoded));
+        $php_only = in_array($name, $chr_php_only_invalid, true);
+        check(
+            $php_only
+                ? "corpus: $name is accepted by the schema (its violation is PHP-only)"
+                : "corpus: $name is rejected by the schema",
+            $chr_schema_accepts($decoded) === $php_only
+        );
+        $parsed = chronicler_sheets_parse_template(file_get_contents($file));
+        check("corpus: $name is rejected by the PHP validator", is_wp_error($parsed));
     }
 }

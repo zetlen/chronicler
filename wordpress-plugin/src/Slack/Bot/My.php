@@ -86,8 +86,14 @@ final class My
      * This GRANTS nothing on its own — it supplies the identity the existing
      * gates already check. Slack asserted the user id in the signature-verified
      * payload, and Inbound refuses everything unverified before we get here.
+     *
+     * Public because /game effect needs the identity WITHOUT the sheet read
+     * around it: a game master applying an effect to somebody else may have no
+     * character of their own, and $character null then falls back to user 0 —
+     * nobody, holding no capability, which is the right answer for a Slack id
+     * this site has never heard of.
      */
-    private static function become(string $slackId, $character): void
+    public static function become(string $slackId, $character = null): void
     {
         $users = $slackId === '' ? [] : get_users([
             'meta_key' => 'chronicler_slack_user_id',

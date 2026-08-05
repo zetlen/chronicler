@@ -168,6 +168,74 @@ $t['properties'][] = ['id' => 'd', 'label' => 'D', 'type' => 'number', 'derived'
 $err = chronicler_sheets_parse_template(json_encode($t));
 check('parse: number formula must produce a number', is_wp_error($err) && str_contains($err->get_error_message(), 'number'));
 
+// --- Dice pools are splice-only (2026-08-04) --------------------------------------
+// A `dice` property holds notation, not a number. A roll placeholder that is
+// exactly its id splices the character's own pool; every other use of one is a
+// save-time error, because there is no arithmetic on "2d6+1d4".
+
+$chr_pool_template = ['properties' => [
+    'gut' => ['id' => 'gut', 'label' => 'Gut', 'type' => 'dice'],
+    'nerve' => ['id' => 'nerve', 'label' => 'Nerve', 'type' => 'number', 'min' => 0],
+]];
+check('pool ref: a bare dice-property id is a splice', chronicler_sheets_formula_pool_ref('gut', $chr_pool_template) === 'gut');
+check('pool ref: the braces\' own whitespace doesn\'t matter', chronicler_sheets_formula_pool_ref(' gut ', $chr_pool_template) === 'gut');
+check('pool ref: a number property is not a pool', chronicler_sheets_formula_pool_ref('nerve', $chr_pool_template) === null);
+check('pool ref: an undeclared name is not a pool', chronicler_sheets_formula_pool_ref('nonesuch', $chr_pool_template) === null);
+check('pool ref: a pool inside arithmetic is not a splice', chronicler_sheets_formula_pool_ref('floor(gut / 2)', $chr_pool_template) === null);
+check('pool ref: two pools added are not a splice', chronicler_sheets_formula_pool_ref('gut + gut', $chr_pool_template) === null);
+
+$err = chronicler_sheets_formula_check('floor(gut / 2)', $chr_pool_template);
+check(
+    'check: a pool asked to be a number is refused, by name',
+    is_wp_error($err) && str_contains($err->get_error_message(), 'gut')
+        && str_contains($err->get_error_message(), "can't be used as a number")
+);
+check('… and the refusal shows where a pool DOES go', is_wp_error($err) && str_contains($err->get_error_message(), '{gut}'));
+check(
+    'check: a pool has no parts either',
+    is_wp_error(chronicler_sheets_formula_check('gut["current"]', $chr_pool_template))
+);
+
+$chr_pool_base = [
+    'system' => 'Pools', 'version' => 1, 'layout' => [],
+    'properties' => [
+        ['id' => 'gut', 'label' => 'Gut', 'type' => 'dice'],
+        ['id' => 'nerve', 'label' => 'Nerve', 'type' => 'number', 'min' => 0],
+    ],
+];
+$t = $chr_pool_base;
+$t['rolls'] = [['id' => 'check', 'label' => 'Check', 'dice' => '{gut} + {nerve}']];
+$chr_pool_saved = chronicler_sheets_parse_template(json_encode($t));
+check(
+    'parse: a roll splicing a bare pool saves',
+    is_array($chr_pool_saved),
+    is_wp_error($chr_pool_saved) ? $chr_pool_saved->get_error_message() : ''
+);
+
+$t = $chr_pool_base;
+$t['rolls'] = [['id' => 'check', 'label' => 'Check', 'dice' => '1d6 + {floor(gut / 2)}']];
+$err = chronicler_sheets_parse_template(json_encode($t));
+check(
+    'parse: a pool inside roll arithmetic is a save error naming it',
+    is_wp_error($err) && str_contains($err->get_error_message(), 'gut')
+        && str_contains($err->get_error_message(), "can't be used as a number")
+);
+
+$t = $chr_pool_base;
+$t['rolls'] = [['id' => 'check', 'label' => 'Check', 'dice' => '1d6 + {gut + 1}']];
+check(
+    'parse: adding to a pool is a save error too',
+    is_wp_error(chronicler_sheets_parse_template(json_encode($t)))
+);
+
+$t = $chr_pool_base;
+$t['properties'][] = ['id' => 'half', 'label' => 'Half', 'type' => 'number', 'derived' => 'floor(gut / 2)'];
+$err = chronicler_sheets_parse_template(json_encode($t));
+check(
+    'parse: a derived formula can\'t read a pool either',
+    is_wp_error($err) && str_contains($err->get_error_message(), 'dice pool')
+);
+
 // --- write gate ------------------------------------------------------------------
 
 $derived_prop = $formula_template['properties']['toughness'];
@@ -248,3 +316,161 @@ check(
 // The synthetic member's type is internal: no author can declare a property
 // of that type, so the namespace cannot be forged from a template.
 check('the synthetic entry type is not an authorable property type', !in_array(CHRONICLER_FORMULA_ENTRY_TYPE, CHRONICLER_SHEETS_TYPES, true));
+
+// --- The effect scope (2026-08-04): roll and amount ----------------------------
+// An effect's modifier is a formula about a roll, not about the sheet, so the
+// fence plants two synthetic members the way `entry` is planted for a list
+// roll's dice: `roll` (what is being rolled, its own names plus every trait
+// the template declares, null-filled) and `amount` (the instance's magnitude).
+$chr_fx_base = ['properties' => [
+    'cool' => ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'min' => -1, 'max' => 3],
+    'rizz' => ['id' => 'rizz', 'label' => 'Rizz', 'type' => 'dice'],
+]];
+$chr_fx_scope = chronicler_sheets_formula_effect_scope($chr_fx_base, ['basic_move', 'save']);
+
+$chr_fx_ok = chronicler_sheets_formula_check("roll['basic_move'] ? -amount : 0", $chr_fx_scope);
+check('effect scope: a declared trait and amount are known names', is_array($chr_fx_ok), is_wp_error($chr_fx_ok) ? $chr_fx_ok->get_error_message() : '');
+check(
+    'effect scope: a roll\'s own names are reachable too',
+    is_array(chronicler_sheets_formula_check("roll['id'] == 'taunt' ? -amount : 0", $chr_fx_scope))
+);
+check(
+    'effect scope: membership over roll["uses"] is what targets a pool',
+    is_array(chronicler_sheets_formula_check("'rizz' in roll['uses'] ? -amount : 0", $chr_fx_scope))
+);
+check(
+    'effect scope: the character\'s own properties are still in scope',
+    is_array(chronicler_sheets_formula_check('cool > 0 ? amount : 0', $chr_fx_scope))
+);
+$chr_fx_typo = chronicler_sheets_formula_check("roll['basic_moove'] ? -amount : 0", $chr_fx_scope);
+check(
+    'effect scope: a trait nothing declares is a save error naming the typo',
+    is_wp_error($chr_fx_typo) && str_contains($chr_fx_typo->get_error_message(), 'basic_moove')
+);
+check('… and the refusal lists what a roll does answer to', is_wp_error($chr_fx_typo) && str_contains($chr_fx_typo->get_error_message(), 'save'));
+$chr_fx_dynamic = chronicler_sheets_formula_check("roll[roll['id']] ? -amount : 0", $chr_fx_scope);
+check(
+    'effect scope: a subscript that is not a constant is refused',
+    is_wp_error($chr_fx_dynamic)
+);
+$chr_fx_bare = chronicler_sheets_formula_check('roll + 1', $chr_fx_scope);
+check(
+    'effect scope: bare roll is refused, pointing at the bracket spelling',
+    is_wp_error($chr_fx_bare) && str_contains($chr_fx_bare->get_error_message(), 'roll["')
+);
+check(
+    'effect scope: without it, roll and amount are unknown names (derived, rolls)',
+    is_wp_error(chronicler_sheets_formula_check("roll['basic_move']", $chr_fx_base))
+        && is_wp_error(chronicler_sheets_formula_check('amount', $chr_fx_base))
+);
+// The synthetic type is internal by the same construction `entry`'s is.
+check('the synthetic roll type is not an authorable property type', !in_array(CHRONICLER_FORMULA_ROLL_TYPE, CHRONICLER_SHEETS_TYPES, true));
+
+// The member the fence describes and the member evaluation hands over are
+// built by one function, so they cannot disagree about what a roll answers to.
+$chr_fx_member = chronicler_sheets_formula_roll_member(
+    ['id' => 'taunt', 'label' => 'Taunt', 'section' => 'Moves', 'uses' => ['rizz', 'crowd'], 'traits' => ['social' => true]],
+    ['basic_move', 'social']
+);
+check(
+    'roll member: the roll\'s own names ride alongside its traits',
+    $chr_fx_member['id'] === 'taunt' && $chr_fx_member['label'] === 'Taunt'
+        && $chr_fx_member['section'] === 'Moves' && $chr_fx_member['uses'] === ['rizz', 'crowd']
+        && $chr_fx_member['social'] === true
+);
+check(
+    'roll member: a trait this roll lacks is null, never a missing key',
+    array_key_exists('basic_move', $chr_fx_member) && $chr_fx_member['basic_move'] === null
+);
+$chr_fx_empty = chronicler_sheets_formula_roll_member([], ['basic_move']);
+check(
+    'roll member: an empty roll still answers to every name the fence allows',
+    array_keys($chr_fx_empty) === array_merge(CHRONICLER_SHEETS_RESERVED_ROLL_KEYS, ['basic_move'])
+);
+check(
+    'roll member: a trait named like a reserved key can\'t outrank the real one',
+    chronicler_sheets_formula_roll_member(['id' => 'taunt', 'traits' => ['id' => 'nope']], [])['id'] === 'taunt'
+);
+$chr_fx_context = chronicler_sheets_formula_effect_context(['cool' => 2], ['id' => 'taunt'], 3, ['social']);
+check(
+    'effect context: the character context keeps its own names, plus roll and amount',
+    $chr_fx_context['cool'] === 2 && $chr_fx_context['amount'] === 3 && $chr_fx_context['roll']['id'] === 'taunt'
+);
+
+// The trait union: every name declared anywhere in the template, once.
+check(
+    'trait union: rolls, dice properties and dice fields all contribute',
+    chronicler_sheets_template_traits([
+        'properties' => [
+            'rizz' => ['type' => 'dice', 'traits' => ['social' => true]],
+            'gear' => ['type' => 'list', 'fields' => [
+                ['id' => 'roll', 'type' => 'dice', 'traits' => ['attack' => true]],
+                ['id' => 'name', 'type' => 'text'],
+            ]],
+        ],
+        'rolls' => ['taunt' => ['traits' => ['social' => true, 'basic_move' => true]]],
+    ]) === ['social', 'attack', 'basic_move']
+);
+check('trait union: a template that declares none has none', chronicler_sheets_template_traits(['properties' => [], 'rolls' => []]) === []);
+
+// And the save path, end to end: the fence runs on effect expressions, with
+// the union gathered from the whole document.
+$chr_fx_tpl = function (array $effects, array $extra = []) {
+    return json_encode(array_merge([
+        'system' => 'Effects', 'version' => 1,
+        'properties' => [
+            ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'min' => -1, 'max' => 3],
+            ['id' => 'rizz', 'label' => 'Rizz', 'type' => 'dice'],
+        ],
+        'rolls' => [
+            ['id' => 'taunt', 'label' => 'Taunt', 'dice' => '{rizz}', 'traits' => ['social' => true]],
+        ],
+        'effects' => $effects,
+    ], $extra));
+};
+$chr_fx_saved = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'taunted', 'label' => 'Taunted', 'modifier' => "'rizz' in roll['uses'] ? -amount : 0", 'cap' => -2],
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => "roll['social'] ? -amount : 0"],
+]));
+check('parse: effect expressions save', is_array($chr_fx_saved), is_wp_error($chr_fx_saved) ? $chr_fx_saved->get_error_message() : '');
+$chr_fx_err = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => "roll['sociable'] ? -amount : 0"],
+]));
+check(
+    'parse: an undeclared trait in an effect expression is a save error naming it',
+    is_wp_error($chr_fx_err) && str_contains($chr_fx_err->get_error_message(), 'sociable')
+);
+$chr_fx_err = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => 'nonesuch + 1'],
+]));
+check(
+    'parse: an undeclared property in an effect expression is a save error',
+    is_wp_error($chr_fx_err)
+);
+$chr_fx_err = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => "roll['social']"],
+]));
+check(
+    'parse: an effect formula that produces a true/false is a save error',
+    is_wp_error($chr_fx_err) && str_contains($chr_fx_err->get_error_message(), 'must produce a number')
+);
+$chr_fx_err = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => "roll['social'] ? -amount : 0"],
+], ['properties' => [
+    ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'min' => -1, 'max' => 3],
+    ['id' => 'rizz', 'label' => 'Rizz', 'type' => 'dice'],
+    ['id' => 'amount', 'label' => 'Amount', 'type' => 'number'],
+]]));
+check(
+    'parse: a property named like an effect\'s own names is a save error, not a silent shadow',
+    is_wp_error($chr_fx_err) && str_contains($chr_fx_err->get_error_message(), 'amount')
+);
+// A pool inside an effect expression is refused exactly as it is anywhere
+// else: {rizz} splices dice, and there is no arithmetic on notation.
+$chr_fx_err = chronicler_sheets_parse_template($chr_fx_tpl([
+    ['id' => 'rattled', 'label' => 'Rattled', 'modifier' => 'rizz - 1'],
+]));
+check(
+    'parse: an effect formula can\'t read a dice pool either',
+    is_wp_error($chr_fx_err) && str_contains($chr_fx_err->get_error_message(), 'dice pool')
+);

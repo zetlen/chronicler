@@ -34,6 +34,11 @@ const CHRONICLER_FORMULA_BINARY_OPS = [
     '+', '-', '*', '/', '%',
     '==', '!=', '<', '>', '<=', '>=',
     'and', 'or', '&&', '||',
+    // Membership (2026-08-04), for the one list a formula can reach: an
+    // effect asking `'rizz' in roll["uses"]`. Everything else in scope is a
+    // scalar or wants a ["part"], so `in` had nothing to test until rolls
+    // brought their own list.
+    'in', 'not in',
 ];
 const CHRONICLER_FORMULA_UNARY_OPS = ['-', '+', 'not', '!'];
 
@@ -49,6 +54,15 @@ const CHRONICLER_FORMULA_REF_TYPES = ['number', 'track', 'counter', 'toggle', 's
  * forged or shadowed from a template.
  */
 const CHRONICLER_FORMULA_ENTRY_TYPE = 'list entry';
+
+/**
+ * The type of the synthetic `roll` member an effect expression is fenced
+ * against (2026-08-04): the roll being made, right now, as the effect decides
+ * whether it touches it. Internal by the same construction as `entry` —
+ * CHRONICLER_SHEETS_TYPES never admits it — so nothing an author writes can
+ * forge one. Its parts are chronicler_sheets_formula_roll_member()'s keys.
+ */
+const CHRONICLER_FORMULA_ROLL_TYPE = 'roll';
 
 /** Whether the bundled expression engine is present (vendor/ built). */
 function chronicler_sheets_formula_available(): bool {
@@ -87,6 +101,11 @@ function chronicler_sheets_formula_subkeys(array $property): ?array {
             // The synthetic `entry` member: its parts are the referencable
             // field ids of the list entry a character-carried roll rides.
             return $property['fields'];
+        case CHRONICLER_FORMULA_ROLL_TYPE:
+            // The synthetic `roll` member: a roll's own names plus every
+            // trait any roll in this system declares, so a typo'd trait is a
+            // save-time error naming it rather than a silent 0 at the table.
+            return $property['fields'];
         default:
             return null; // scalar — referenced bare, no dotting
     }
@@ -101,11 +120,11 @@ function chronicler_sheets_formula_subkeys(array $property): ?array {
 function chronicler_sheets_formula_context(array $template, array $values): array {
     $context = [];
     foreach ($template['properties'] as $id => $property) {
-        if ($property['type'] === CHRONICLER_FORMULA_ENTRY_TYPE) {
-            // The synthetic `entry` member: the caller passes the value map
-            // ready-made (chronicler_sheets_formula_entry_values). An absent
-            // map still registers the name, which is all the fence's
-            // name-check needs.
+        if (in_array($property['type'], [CHRONICLER_FORMULA_ENTRY_TYPE, CHRONICLER_FORMULA_ROLL_TYPE], true)) {
+            // A synthetic member (`entry`, `roll`): the caller passes the
+            // value map ready-made (chronicler_sheets_formula_entry_values,
+            // chronicler_sheets_formula_roll_member). An absent map still
+            // registers the name, which is all the fence's name-check needs.
             $context[$id] = (array) ($values[$id] ?? []);
             continue;
         }
@@ -140,6 +159,23 @@ function chronicler_sheets_formula_context(array $template, array $values): arra
 }
 
 /**
+ * The dice property a {…} placeholder SPLICES, or null when the placeholder is
+ * ordinary arithmetic (2026-08-04). A pool's value is notation, not a number,
+ * so it goes into a roll whole or not at all: only a placeholder whose entire
+ * expression is a bare dice-property id qualifies. Everything else — even
+ * `{gut}` where `gut` is a number — comes back null and takes the fence path.
+ * Pure, and the one answer to "is this a splice" that the save path, the roll
+ * path and `uses` all ask.
+ */
+function chronicler_sheets_formula_pool_ref(string $expression, array $template): ?string {
+    $name = trim($expression);
+    if (!preg_match(CHRONICLER_SHEETS_ID_PATTERN, $name)) {
+        return null;
+    }
+    return (($template['properties'][$name]['type'] ?? null) === 'dice') ? $name : null;
+}
+
+/**
  * Parse + fence one formula against the template's properties. Returns
  * ['refs' => [property ids]] on success, WP_Error naming the problem (with
  * the engine's positional detail where it has one) otherwise. Pure.
@@ -152,6 +188,14 @@ function chronicler_sheets_formula_check(string $expr, array $template) {
         );
     }
     $names = array_keys(chronicler_sheets_formula_context($template, []));
+    // Dice pools are NOT in the context — notation has no arithmetic meaning —
+    // but the fence knows their names anyway, so `{floor(gut / 2)}` gets an
+    // answer about pools instead of the engine's "Variable gut is not valid".
+    foreach (($template['properties'] ?? []) as $id => $property) {
+        if (($property['type'] ?? null) === 'dice') {
+            $names[] = $id;
+        }
+    }
     try {
         $parsed = chronicler_sheets_formula_engine()->parse($expr, $names);
     } catch (SyntaxError $e) {
@@ -177,6 +221,13 @@ function chronicler_sheets_formula_walk(Node $node, array $template, array &$ref
         $name = $node->attributes['name'];
         $refs[] = $name;
         $property = $template['properties'][$name] ?? null;
+        if (($property['type'] ?? null) === 'dice') {
+            // A pool reached the fence, which means it is being asked to be a
+            // number: halve it, add one to it, compare it. There is no such
+            // arithmetic — the value is "2d6+1d4" — so the refusal points at
+            // the one place a pool does belong.
+            return $bad("\"$name\" is a dice pool, and a dice pool can't be used as a number. A roll splices one whole: {" . $name . '}.');
+        }
         if ($property !== null
             && chronicler_sheets_formula_subkeys($property) !== null
             && $inSubscriptOf !== $name) {
@@ -324,6 +375,73 @@ function chronicler_sheets_formula_entry_scope(array $template, array $field_ids
         'fields' => array_values($field_ids),
     ];
     return $template;
+}
+
+/**
+ * One roll as an effect expression sees it (2026-08-04): the roll's own names
+ * — CHRONICLER_SHEETS_RESERVED_ROLL_KEYS — with its author-defined traits
+ * flattened in alongside them, and every OTHER trait the template declares
+ * filled in null.
+ *
+ * The null fill is the whole point. `roll["save"] == "dexterity"` has to be
+ * answerable on a roll that has no `save`, and PHP's missing-key read would
+ * warn and hand back null anyway; declaring the union means the fence can
+ * check the key at SAVE time and a typo becomes an error instead of an
+ * effect that silently never fires. $trait_keys is the union
+ * (chronicler_sheets_template_traits); a trait by a reserved name is refused
+ * at save, and skipped here too so it can never outrank the real thing.
+ */
+function chronicler_sheets_formula_roll_member(array $roll, array $trait_keys): array {
+    $member = [];
+    foreach (CHRONICLER_SHEETS_RESERVED_ROLL_KEYS as $key) {
+        $member[$key] = $roll[$key] ?? null;
+    }
+    $member['uses'] = array_values((array) ($roll['uses'] ?? []));
+    $member['traits'] = is_array($roll['traits'] ?? null) ? $roll['traits'] : [];
+    foreach ($trait_keys as $key) {
+        if (!in_array($key, CHRONICLER_SHEETS_RESERVED_ROLL_KEYS, true)) {
+            $member[$key] = null;
+        }
+    }
+    foreach ($member['traits'] as $key => $value) {
+        if (!in_array($key, CHRONICLER_SHEETS_RESERVED_ROLL_KEYS, true)) {
+            $member[$key] = $value;
+        }
+    }
+    return $member;
+}
+
+/**
+ * The template an effect's modifier expression is fenced against: the real
+ * properties plus two synthetic members — `roll`, the roll being made, and
+ * `amount`, the instance's magnitude. Exactly the carve-out `entry` is for a
+ * list roll's dice, and for the same reason: an effect asks about things that
+ * are not on the character sheet.
+ *
+ * The parts come from chronicler_sheets_formula_roll_member(), so the fence
+ * and the runtime context cannot disagree about what a roll answers to.
+ * `roll` and `amount` DO shadow properties by those names, which is why
+ * chronicler_sheets_parse_effect() refuses a template that declares one.
+ */
+function chronicler_sheets_formula_effect_scope(array $template, array $trait_keys): array {
+    $template['properties']['roll'] = [
+        'type' => CHRONICLER_FORMULA_ROLL_TYPE,
+        'fields' => array_keys(chronicler_sheets_formula_roll_member([], $trait_keys)),
+    ];
+    $template['properties']['amount'] = ['id' => 'amount', 'label' => 'Amount', 'type' => 'number'];
+    return $template;
+}
+
+/**
+ * A character's formula context with the two effect-scoped names added: the
+ * roll being evaluated against, and this instance's amount. The counterpart
+ * of chronicler_sheets_formula_effect_scope() — same members, now carrying
+ * values.
+ */
+function chronicler_sheets_formula_effect_context(array $context, array $roll, int $amount, array $trait_keys): array {
+    $context['roll'] = chronicler_sheets_formula_roll_member($roll, $trait_keys);
+    $context['amount'] = $amount;
+    return $context;
 }
 
 /**

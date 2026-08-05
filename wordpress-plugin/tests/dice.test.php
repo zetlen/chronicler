@@ -171,6 +171,79 @@ check('a placeholder is keyed by its whole expression', $r['total'] === 5, json_
 $r = chronicler_sheets_roll_dice(chronicler_sheets_parse_dice('3d6kh1'), [], $chr_dice_script([4, 4, 2]));
 check('a tie for highest keeps the first of the tied dice', array_column($r['terms'][0]['dice'], 'kept') === [true, false, false]);
 
+// --- pool expansion (2026-08-04): {gut} splices a character's own dice -------
+// $pools maps a placeholder's whole expression to that character's notation.
+// Callers own the visibility check; this only reads what it is handed.
+
+$chr_expand = function (string $expr, array $pools) {
+    return chronicler_sheets_expand_dice_pools(chronicler_sheets_parse_dice($expr), $pools);
+};
+
+$x = $chr_expand('{gut} + 2', ['gut' => '2d4']);
+check('a pool placeholder becomes the pool\'s own terms', is_array($x) && count($x['terms']) === 2, json_encode($x));
+check(
+    '… as real dice, not a number',
+    is_array($x) && $x['terms'][0]['kind'] === 'dice' && $x['terms'][0]['count'] === 2 && $x['terms'][0]['sides'] === 4
+);
+check('… with the rest of the roll untouched', is_array($x) && $x['terms'][1]['kind'] === 'const' && $x['terms'][1]['value'] === 2);
+
+$x = $chr_expand('{gut} + {nausea_mod}', ['gut' => '2d6+1d4']);
+check('a multi-term pool splices every term', is_array($x) && count($x['terms']) === 3, json_encode($x));
+check(
+    '… and a placeholder the map doesn\'t mention stays a placeholder',
+    is_array($x) && $x['terms'][2]['kind'] === 'expr' && $x['terms'][2]['expression'] === 'nausea_mod'
+);
+
+// A subtracted pool subtracts ALL of itself, not just its first die.
+$x = $chr_expand('1d20 - {gut}', ['gut' => '1d4 + 1']);
+check(
+    'a subtracted pool negates every spliced term',
+    is_array($x) && count($x['terms']) === 3 && $x['terms'][1]['sign'] === -1 && $x['terms'][2]['sign'] === -1,
+    json_encode($x)
+);
+$r = chronicler_sheets_roll_dice($x, [], $chr_dice_script([10, 3]));
+check('… and the arithmetic follows (10 - 3 - 1)', $r['total'] === 6, json_encode($r));
+
+// A pool inside a pool is NOT expanded again: it survives as a placeholder,
+// which the roll path then refuses as arithmetic over a pool. One level, no
+// recursion, no way to loop.
+$x = $chr_expand('{gut}', ['gut' => '1d6 + {gut}']);
+check('expansion goes exactly one level deep', is_array($x)
+    && count($x['terms']) === 2 && $x['terms'][1]['kind'] === 'expr' && $x['terms'][1]['expression'] === 'gut');
+
+check('a roll with no pools comes back unchanged', $chr_expand('2d6 + {cool}', []) === chronicler_sheets_parse_dice('2d6 + {cool}'));
+
+$x = $chr_expand('{gut} + 1', ['gut' => '']);
+check('an empty pool is an error, never a silent 0', is_wp_error($x));
+check('… naming the placeholder and what the sheet holds', is_wp_error($x)
+    && $x->get_error_code() === 'chronicler_invalid_pool'
+    && $x->get_error_data() === ['pool' => 'gut', 'value' => '']);
+$x = $chr_expand('{gut} + 1', ['gut' => 'as much as it takes']);
+check('an unparseable pool is the same error, carrying the string', is_wp_error($x)
+    && $x->get_error_code() === 'chronicler_invalid_pool'
+    && ($x->get_error_data()['value'] ?? '') === 'as much as it takes');
+
+// The term limit is a POST-expansion rule: nine terms plus a three-term pool
+// is eleven, and it refuses in the parser's own words.
+$x = $chr_expand(implode(' + ', array_fill(0, 9, '1')) . ' + {gut}', ['gut' => '1d4+1d6+1d8']);
+check('the term limit applies after expansion', is_wp_error($x), is_array($x) ? 'expanded to ' . count($x['terms']) : '');
+check('… in the parser\'s existing words', is_wp_error($x) && str_contains($x->get_error_message(), 'at most ' . CHRONICLER_DICE_MAX_TERMS . ' terms'));
+check(
+    'a roll that lands exactly on the limit still expands',
+    is_array($chr_expand(implode(' + ', array_fill(0, 8, '1')) . ' + {gut}', ['gut' => '1d4+1d6']))
+);
+
+// Notation round-trips, which is what lets the expanded roll be re-parsed.
+check(
+    'terms render back to the notation they came from',
+    chronicler_sheets_dice_notation(chronicler_sheets_parse_dice('2d6kh1 + {cool - 1} - 3')['terms'])
+        === '2d6kh1 + {cool - 1} - 3'
+);
+check(
+    'a leading negative term keeps its sign',
+    chronicler_sheets_dice_notation(chronicler_sheets_parse_dice('-2 + 1d4')['terms']) === '-2 + 1d4'
+);
+
 // --- the collector (2026-07-25: a move carries its own roll) -----------------
 // chronicler_sheets_character_rolls() turns a VIEWER-FILTERED sheet's list
 // entries into roll-shaped contributions. Pure: sheet in, contributions out.
@@ -307,6 +380,80 @@ $chr_cr_none = chronicler_sheets_character_rolls($chr_cr_sheet([
      'value' => [['name' => 'Rope']]],
 ]));
 check('a sheet with no dice field contributes nothing', $chr_cr_none === []);
+
+// --- dice properties are rollable (2026-08-04) -------------------------------
+// A pool on the viewer-filtered sheet is a roll of its own, keyed by its real
+// property id — /game roll gut.
+
+$chr_pool_sheet = function (array $overrides = []) use ($chr_cr_sheet) {
+    return $chr_cr_sheet([array_merge([
+        'id' => 'gut', 'label' => 'Gut', 'type' => 'dice',
+        'detail' => 'the pool that can end you',
+        'traits' => ['check' => true],
+        'value' => '2d6+1d4',
+    ], $overrides)]);
+};
+$chr_pool_rolls = chronicler_sheets_dice_property_rolls($chr_pool_sheet());
+check('a valued pool contributes one roll, keyed by its property id', array_keys($chr_pool_rolls) === ['gut']);
+check(
+    'the pool roll is shaped exactly like a declared one, plus traits and uses',
+    ($chr_pool_rolls['gut'] ?? null) !== null
+        && $chr_pool_rolls['gut']['id'] === 'gut'
+        && $chr_pool_rolls['gut']['label'] === 'Gut'
+        && $chr_pool_rolls['gut']['section'] === null
+        && $chr_pool_rolls['gut']['dice'] === '2d6+1d4'
+        && $chr_pool_rolls['gut']['detail'] === 'the pool that can end you'
+        && $chr_pool_rolls['gut']['traits'] === ['check' => true]
+        && $chr_pool_rolls['gut']['uses'] === ['gut']
+        && is_array($chr_pool_rolls['gut']['parsed']),
+    json_encode($chr_pool_rolls)
+);
+check(
+    'the pool arrives pre-parsed, terms and all',
+    count($chr_pool_rolls['gut']['parsed']['terms']) === 2
+);
+check('an empty pool offers no roll', chronicler_sheets_dice_property_rolls($chr_pool_sheet(['value' => ''])) === []);
+check(
+    'an unparseable pool offers no roll either (lenient, like a dice field)',
+    chronicler_sheets_dice_property_rolls($chr_pool_sheet(['value' => 'a whole lot'])) === []
+);
+check(
+    'a pool with no detail carries null, not an empty string',
+    chronicler_sheets_dice_property_rolls($chr_pool_sheet(['detail' => '']))['gut']['detail'] === null
+);
+check(
+    'a pool with no traits carries none',
+    chronicler_sheets_dice_property_rolls($chr_pool_sheet(['traits' => null]))['gut']['traits'] === []
+);
+check('a sheet with no pools contributes none', chronicler_sheets_dice_property_rolls($chr_cr_sheet([
+    ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'value' => 2],
+])) === []);
+
+// --- what a roll uses --------------------------------------------------------
+// The property ids a roll's dice reach: pools spliced, properties read.
+
+$chr_uses_template = ['properties' => [
+    'gut' => ['id' => 'gut', 'label' => 'Gut', 'type' => 'dice'],
+    'cool' => ['id' => 'cool', 'label' => 'Cool', 'type' => 'number', 'min' => 0],
+    'luck' => ['id' => 'luck', 'label' => 'Luck', 'type' => 'track', 'length' => 7],
+]];
+$chr_uses = function (string $dice, array $extra = []) use ($chr_uses_template) {
+    return chronicler_sheets_roll_uses(
+        array_merge(['parsed' => chronicler_sheets_parse_dice($dice)], $extra),
+        $chr_uses_template
+    );
+};
+check('a spliced pool is used', $chr_uses('{gut} + 1') === ['gut']);
+check('a placeholder\'s properties are used', $chr_uses('2d6 + {cool}') === ['cool']);
+check('both kinds, in the order the dice read', $chr_uses('{gut} + {cool + luck["current"]}') === ['gut', 'cool', 'luck']);
+check('a repeated reference is listed once', $chr_uses('{cool} + {cool + 1}') === ['cool']);
+check('plain dice use nothing', $chr_uses('2d6 + 1') === []);
+check('what the roll already claims is kept', $chr_uses('2d6 + {cool}', ['uses' => ['gut']]) === ['gut', 'cool']);
+check(
+    'the entry namespace is not a property',
+    $chr_uses('1d8 + {entry["harm"]} + {cool}', ['entry' => ['harm' => 2]]) === ['cool']
+);
+check('a broken placeholder is inert here', $chr_uses('1d6 + {nonesuch}') === []);
 
 // A long first line truncates to one legible menu line.
 $chr_cr_long = chronicler_sheets_character_rolls($chr_cr_sheet([$chr_cr_moves([

@@ -1,0 +1,13 @@
+# "uses" is one of a roll's own names, so no trait may take it: a trait that
+# shadows a roll key would outrank the real thing when an effect asks.
+system: Shadowed Trait
+version: 1
+properties:
+  - id: cool
+    label: Cool
+    type: number
+rolls:
+  - id: act
+    label: Act Under Pressure
+    dice: "2d6 + {cool}"
+    traits: { uses: 1 }

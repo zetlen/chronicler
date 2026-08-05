@@ -653,3 +653,73 @@ unset(
     $GLOBALS['chr_test_opinions'],
     $GLOBALS['chr_test_user_caps']
 );
+
+// --- Active Effects (2026-08-04): applied state, not authored layout ---------
+// A GM-applied effect renders under the masthead in the same fields
+// /game effect prints, for every viewer — no secret effects — and a character
+// carrying nothing renders nothing at all.
+$fx_template = chronicler_sheets_parse_template(json_encode([
+    'system' => 'Test', 'version' => 1,
+    'properties' => [
+        ['id' => 'rizz', 'label' => 'Rizz', 'type' => 'dice'],
+        ['id' => 'grit', 'label' => 'Grit', 'type' => 'number', 'min' => 0, 'max' => 5],
+    ],
+    'rolls' => [['id' => 'nausea_check', 'label' => 'Nausea Check', 'dice' => '2d6']],
+    'effects' => [
+        ['id' => 'queasy', 'label' => 'Queasy', 'applies_to' => 'nausea_check', 'modifier' => -1, 'cap' => -3],
+        ['id' => 'taunted', 'label' => 'Taunted', 'modifier' => "'rizz' in roll['uses'] ? -amount : 0"],
+    ],
+    'layout' => [['section' => 'Stats', 'properties' => ['grit']]],
+]));
+check('effects render fixture parses', is_array($fx_template), is_wp_error($fx_template) ? $fx_template->get_error_message() : '');
+$GLOBALS['chr_test_template'] = $fx_template;
+$GLOBALS['chr_test_values'] = ['grit' => 3];
+$GLOBALS['chr_test_is_gm'] = false;
+$GLOBALS['chr_test_can_edit'] = false;
+
+$no_effects = chronicler_sheets_render_sheet(31);
+check('effects: a character carrying none renders nothing new', strpos($no_effects, 'chr-section--effects') === false);
+
+$GLOBALS['chr_test_post_meta'][31][CHRONICLER_EFFECTS_META] = wp_json_encode([
+    chronicler_sheets_effects_normalize(['effect' => 'queasy', 'amount' => 2, 'note' => 'he ate the whole thing']),
+    chronicler_sheets_effects_normalize(['label' => 'Acne', 'modifier' => -2, 'target' => 'rizz']),
+    chronicler_sheets_effects_normalize(['effect' => 'taunted']),
+    chronicler_sheets_effects_normalize(['effect' => 'bogus']),
+]);
+$with_effects = chronicler_sheets_render_sheet(31);
+check('effects: the row renders in the sheet\'s own section chrome',
+    strpos($with_effects, '<section class="chr-section chr-section--effects"><h2>Active Effects</h2>') !== false);
+check('effects: it sits directly under the masthead',
+    strpos($with_effects, 'chr-section--effects') < strpos($with_effects, '<h2>Stats</h2>'));
+check(
+    'effects: a named instance shows its definition\'s label, contribution, amount and target',
+    strpos($with_effects, '<span class="chr-effect__label">Queasy</span><span class="chr-effect__modifier">-1</span>'
+        . '<span class="chr-effect__amount">×2</span><span class="chr-effect__target">on nausea_check</span>'
+        . '<span class="chr-effect__note">he ate the whole thing</span>') !== false,
+    $with_effects
+);
+check('effects: a one-off shows its own label and number',
+    strpos($with_effects, '<span class="chr-effect__label">Acne</span><span class="chr-effect__modifier">-2</span>'
+        . '<span class="chr-effect__target">on rizz</span>') !== false);
+check('effects: an amount of one goes unsaid', strpos($with_effects, '×1') === false);
+check('effects: a formula modifier prints as expr — its number depends on the roll',
+    strpos($with_effects, '<span class="chr-effect__label">Taunted</span><span class="chr-effect__modifier">expr</span>') !== false);
+check(
+    'effects: an instance the system no longer declares is flagged under its id',
+    strpos($with_effects, '<li class="chr-effect chr-effect--unknown" data-effect="bogus">'
+        . '<span class="chr-effect__label">bogus</span>'
+        . '<span class="chr-effect__note">no longer in this system — clear it?</span></li>') !== false
+);
+check('effects: an effect id is addressable by site CSS', strpos($with_effects, 'data-effect="queasy"') !== false);
+
+// An NPC's effects go with the rest of its withheld stat block: to a visitor
+// that page is lore, not a sheet. Its editor still sees them.
+$GLOBALS['chr_test_post_meta'][31]['chr_npc'] = '1';
+$npc_effects = chronicler_sheets_render_sheet(31);
+check('effects: an NPC withholds them from visitors with the rest of the stats',
+    strpos($npc_effects, 'chr-section--effects') === false);
+$GLOBALS['chr_test_can_edit'] = true;
+$GLOBALS['chr_test_is_gm'] = true;
+check('effects: … and its editor still sees them',
+    strpos(chronicler_sheets_render_sheet(31), 'chr-section--effects') !== false);
+unset($GLOBALS['chr_test_post_meta'][31]);

@@ -1,0 +1,14 @@
+# A dice pool splices whole ("{gut}"); it is never a number to do arithmetic
+# on. This is the corpus's one PHP-ONLY violation: dice notation is an opaque
+# string to JSON Schema, so only the formula fence can catch it (the drift
+# test pins that asymmetry deliberately).
+system: Pool As Number
+version: 1
+properties:
+  - id: gut
+    label: Gut
+    type: dice
+rolls:
+  - id: nausea_check
+    label: Nausea Check
+    dice: "1d6 + {floor(gut/2)}"

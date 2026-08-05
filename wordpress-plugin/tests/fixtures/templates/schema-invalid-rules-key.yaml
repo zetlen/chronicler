@@ -1,6 +1,6 @@
-# rules was removed 2026-07-13 — the schema rejects it as an unknown key.
-# (The PHP parser deliberately ignores it on read, so stored templates
-# survive; the editor and this corpus keep authors from writing new ones.)
+# rules was removed 2026-07-13 — the schema rejects it as an unknown key,
+# and since the top-level allowlist (2026-07-25) the PHP parser refuses it
+# too ('unknown key "rules". Did you mean "rolls"?').
 system: Rules Are Gone
 version: 1
 properties:

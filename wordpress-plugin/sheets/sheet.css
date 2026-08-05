@@ -289,6 +289,46 @@
   border-left: 4px solid var(--chr-accent);
   padding: 0.5rem 1rem;
 }
+/* Active Effects (2026-08-04): GM-applied modifiers, rendered from the
+   character's own state rather than the authored layout, in the same chrome as
+   a stat section. The terms read the way the roll output prints them —
+   "-1 ×2" — so the sheet and the dice message agree at a glance. */
+.chr-effects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.chr-effect {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+}
+.chr-effect__label {
+  font-weight: 600;
+}
+.chr-effect__modifier {
+  font-weight: 700;
+  color: var(--chr-mark);
+  font-variant-numeric: tabular-nums;
+}
+.chr-effect__amount,
+.chr-effect__target {
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+.chr-effect__note {
+  font-style: italic;
+  opacity: 0.85;
+}
+/* An instance whose definition the system dropped: inert, and visibly so
+   until somebody clears it. */
+.chr-effect--unknown .chr-effect__label {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
 /* One-time arrival notice (GitHub #1): the login redirect's chr_welcome
    landing, editor-eyes only (render.php drops it for everyone else). A
    top-center toast; sheet.js dismisses it on click or after 10 seconds by

@@ -31,6 +31,11 @@
       "type": "array",
       "description": "The named things a character does — \"Act Under Pressure\", \"Longsword\" — each with the dice it rolls. Addressed by id from the Slack bot (/game roll).",
       "items": { "$ref": "#/definitions/roll" }
+    },
+    "effects": {
+      "type": "array",
+      "description": "The temporary modifiers this system hands out — \"+1 forward\", \"Queasy\", \"Taunted\". A template declares only the vocabulary; a game master applies one to a character (/game effect add wolf forward) and it then prints as its own labeled, signed term in every roll it touches. Nothing expires by itself: the term showing up in a roll it no longer belongs in is how a stale effect gets caught.",
+      "items": { "$ref": "#/definitions/effect" }
     }
   },
   "x-chronicler-formula": {
@@ -81,7 +86,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["number", "track", "counter", "toggle", "select", "checklist", "text", "longtext", "list", "opinions"],
+          "enum": ["number", "track", "counter", "toggle", "select", "checklist", "text", "longtext", "list", "opinions", "dice"],
           "description": "What kind of value this property holds.",
           "markdownEnumDescriptions": [
             "A whole number, optionally bounded by `min`/`max`. Negative ranges render signed (e.g. +2).",
@@ -93,7 +98,8 @@
             "A short single-line text field.",
             "A multi-line rich-text field.",
             "A repeatable list of entries, each with its own `fields`. Edited in wp-admin only.",
-            "One opinion set per player character — a 0..`length` rating track plus a notes box, labeled with the PC's name. Renders on NPC pages only. Each set is a personal notebook: visible and live-editable solely by its PC's own player, with GMs seeing every set."
+            "One opinion set per player character — a 0..`length` rating track plus a notes box, labeled with the PC's name. Renders on NPC pages only. Each set is a personal notebook: visible and live-editable solely by its PC's own player, with GMs seeing every set.",
+            "A dice pool the character owns, as notation (`3d4`, `2d6+1d4`, `2d6kh1`). Rollable directly (/game roll gut) and spliceable into system rolls as a bare {id} placeholder. Validated leniently: an unparseable value saves fine and simply offers no roll."
           ]
         },
         "live": {
@@ -145,9 +151,14 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
           "description": "Which field names an entry of this list in roll menus (/game roll). Must be a text field. Optional: defaults to the list's first text field."
-        }
+        },
+        "traits": { "$ref": "#/definitions/traits" }
       },
       "allOf": [
+        {
+          "if": { "required": ["traits"] },
+          "then": { "required": ["type"], "properties": { "type": { "const": "dice" } } }
+        },
         {
           "if": { "required": ["type"], "properties": { "type": { "const": "track" } } },
           "then": { "required": ["length"] }
@@ -202,12 +213,17 @@
         "when": { "type": "string", "minLength": 1, "description": "An expression (same language as `derived`) over this entry's other fields — the field shows only while it's true. A bare toggle id works: `when: is_weapon`." },
         "min": { "type": "integer" },
         "max": { "type": "integer" },
-        "options": { "type": "array", "items": { "$ref": "#/definitions/option" } }
+        "options": { "type": "array", "items": { "$ref": "#/definitions/option" } },
+        "traits": { "$ref": "#/definitions/traits" }
       },
       "allOf": [
         {
           "if": { "required": ["type"], "properties": { "type": { "const": "select" } } },
           "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } }
+        },
+        {
+          "if": { "required": ["traits"] },
+          "then": { "required": ["type"], "properties": { "type": { "const": "dice" } } }
         }
       ]
     },
@@ -251,8 +267,52 @@
           "minLength": 1,
           "description": "Dice notation: terms joined by + and -. `NdM` rolls N dice of M sides; `NdMkhK` / `NdMklK` keeps the highest / lowest K (2d20kh1 is advantage, 4d6kh3 drops the lowest); a whole number is a constant; `{…}` holds a formula in the same language as `derived`, evaluated against this character and added as a number — e.g. \"2d6 + {cool}\" or \"1d20 + {floor(dex / 2)}\". At most 10 terms, 100 dice and 1000 sides per term."
         },
-        "detail": { "type": "string", "minLength": 1, "description": "What the roll is for (e.g. \"when you do something under fire\"), shown with the result." }
+        "detail": { "type": "string", "minLength": 1, "description": "What the roll is for (e.g. \"when you do something under fire\"), shown with the result." },
+        "traits": { "$ref": "#/definitions/traits" }
       }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "modifier"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Machine id for this effect — what a game master types to apply or clear it (/game effect add wolf forward)."
+        },
+        "label": { "type": "string", "minLength": 1, "description": "Human-readable name, e.g. \"Forward\". This is what rides the term inside a roll: `+1 (Forward)`." },
+        "detail": { "type": "string", "minLength": 1, "description": "What the effect is for, shown where it is listed (e.g. \"+1 to what you roll next; clear it once it lands\")." },
+        "modifier": {
+          "type": ["integer", "string"],
+          "minLength": 1,
+          "description": "What this effect contributes, in one of two forms. A whole number is the sugar: that much (times the instance's amount) on every roll `applies_to` names. A string is a formula in the same language as `derived`, evaluated per roll, which picks its own rolls: it reads `amount` (the instance's magnitude) and `roll` — `roll[\"id\"]`, `roll[\"label\"]`, `roll[\"section\"]`, `roll[\"uses\"]` (the property ids the dice reach, so `'rizz' in roll[\"uses\"]` catches every roll with Rizz in it) and every trait any roll in this system declares. It must produce a number; 0 means the effect leaves this roll alone."
+        },
+        "applies_to": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "One target word for a whole-number modifier, matched in order against the roll's id, its label, a trait of this roll that is on, and finally a property id (matching every roll whose dice reach it). Leave it out and the effect applies to every roll. Trait VALUES (save == \"dexterity\") need the formula form."
+        },
+        "cap": {
+          "type": "integer",
+          "description": "How far this effect's stacked instances can add up before they stop: apply Taunted three times with `cap: -2` and the roll still only loses 2. Bounds the sum per effect, in the direction of its own sign."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["applies_to"] },
+          "then": { "properties": { "modifier": { "type": "integer" } } }
+        }
+      ]
+    },
+    "traits": {
+      "type": "object",
+      "description": "Author-defined attributes saying what this roll IS, so an effect can target a category: `traits: { save: dexterity, magic_resistible: true }`. Names are lowercase ids and must not be one of a roll's own names (id, label, section, dice, detail, uses, traits); values are text, whole numbers or true/false.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "not": { "enum": ["id", "label", "section", "dice", "detail", "uses", "traits"] }
+      },
+      "additionalProperties": { "type": ["string", "integer", "boolean"] }
     }
   }
 }
